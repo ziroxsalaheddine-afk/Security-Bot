@@ -1,48 +1,47 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { PREFIX } from '../config.js';
 import { getDB, isWhitelisted } from '../utils/database.js';
-import { automodEmbed, errorEmbed } from '../utils/embeds.js';
+import { isAuthorized } from '../utils/auth.js';
+import { automodEmbed, errorEmbed, accessDeniedEmbed } from '../utils/embeds.js';
 
-// ── URL / invite pattern ──────────────────────────────────────────────────────
-const URL_REGEX = /https?:\/\/[^\s]+/i;
+// ── Regex ─────────────────────────────────────────────────────────────────────
 const INVITE_REGEX = /discord(?:\.gg|\.com\/invite|app\.com\/invite)\/[a-zA-Z0-9-]+/i;
+const URL_REGEX = /https?:\/\/[^\s]+/i;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function isAdmin(member) {
-  return (
-    member.permissions.has(PermissionFlagsBits.Administrator) ||
-    member.permissions.has(PermissionFlagsBits.ManageGuild)
-  );
-}
 
 async function sendLog(guild, embed) {
   try {
     const db = getDB();
-    const channelId = db.logs?.channelId;
-    if (!channelId) return;
-    const ch = guild.channels.cache.get(channelId);
+    const ch = guild.channels.cache.get(db.logs?.channelId);
     if (ch?.isTextBased()) await ch.send({ embeds: [embed] });
-  } catch { /* non-critical — don't let log failure abort enforcement */ }
+  } catch { /* non-critical */ }
 }
 
-async function timeoutMember(member, durationMs, reason) {
-  if (member.isCommunicationDisabled()) return false;
-  try {
-    await member.timeout(durationMs, reason);
-    return true;
-  } catch {
-    return false;
+async function applyAction(member, action, reason) {
+  const MS_5MIN = 300_000;
+  switch (action) {
+    case 'timeout':
+      if (!member.isCommunicationDisabled()) {
+        await member.timeout(MS_5MIN, reason).catch(() => {});
+      }
+      break;
+    case 'kick':
+      await member.kick(reason).catch(() => {});
+      break;
+    case 'ban':
+      await member.ban({ reason }).catch(() => {});
+      break;
+    case 'delete':
+    default:
+      break; // message already deleted before this is called
   }
 }
 
 // ── Anti-spam tracker ─────────────────────────────────────────────────────────
 async function handleAntiSpam(client, message, cfg) {
   const { messageLimit, interval, timeoutDuration } = cfg;
-  const userId = message.author.id;
-  const guildId = message.guild.id;
-  // Guild-scoped key prevents cross-guild false positives
-  const trackerKey = `${guildId}:${userId}`;
+  const trackerKey = `${message.guild.id}:${message.author.id}`;
   const now = Date.now();
 
   let tracker = client.spamTracker.get(trackerKey);
@@ -56,78 +55,58 @@ async function handleAntiSpam(client, message, cfg) {
   if (tracker.count >= messageLimit) {
     client.spamTracker.delete(trackerKey);
 
-    // ── Enforce FIRST (fail-safe), then notify ────────────────────────────
-    const timedOut = await timeoutMember(
-      message.member,
-      timeoutDuration,
-      'Anti-Spam: Exceeded message rate limit',
-    );
+    // Enforce first — notify after
+    const mem = message.member;
+    const timedOut = !mem.isCommunicationDisabled() &&
+      await mem.timeout(timeoutDuration, 'Anti-Spam').catch(() => false);
+    if (!timedOut) await mem.kick('Anti-Spam: timeout unavailable').catch(() => {});
 
-    if (!timedOut) {
-      // Fall back to kick if timeout fails (e.g. missing permission or already timed out)
-      await message.member.kick('Anti-Spam: Rate limit exceeded, timeout unavailable').catch(() => {});
-    }
-
-    // Notify and log after enforcement (non-blocking)
-    const embed = automodEmbed(
-      'ANTI-SPAM',
-      userId,
-      `${tracker.count} messages in <${interval / 1000}s`,
-    );
+    const embed = automodEmbed('ANTI-SPAM', message.author.id, `${tracker.count} msgs in <${interval / 1000}s`);
     message.channel.send({ embeds: [embed] }).catch(() => {});
     sendLog(message.guild, embed);
-
     return true;
   }
   return false;
 }
 
-// ── Anti-link filter ──────────────────────────────────────────────────────────
-async function handleAntiLink(message, cfg) {
-  const content = message.content;
-  const hasLink = URL_REGEX.test(content) || INVITE_REGEX.test(content);
-  if (!hasLink) return false;
-
-  // Delete first — enforcement is primary
+// ── Anti-invite (Discord invite links) ────────────────────────────────────────
+async function handleAntiInvite(message, cfg) {
+  if (!INVITE_REGEX.test(message.content)) return false;
   await message.delete().catch(() => {});
-
-  const embed = automodEmbed('ANTI-LINK', message.author.id, content);
-  message.channel
-    .send({ embeds: [embed] })
-    .then(m => setTimeout(() => m.delete().catch(() => {}), 5000))
-    .catch(() => {});
+  await applyAction(message.member, cfg.action, 'Anti-Invite: Discord invite link detected');
+  const embed = automodEmbed('ANTI-INVITE', message.author.id, message.content);
+  message.channel.send({ embeds: [embed] }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
   sendLog(message.guild, embed);
-
   return true;
 }
 
-// ── Anti-mass-mention filter ──────────────────────────────────────────────────
+// ── Anti-link (all other http/https links) ────────────────────────────────────
+async function handleAntiLink(message, cfg) {
+  // Strip invite links first so they're handled by anti-invite
+  const content = message.content.replace(INVITE_REGEX, '');
+  if (!URL_REGEX.test(content)) return false;
+  await message.delete().catch(() => {});
+  await applyAction(message.member, cfg.action, 'Anti-Link: External URL detected');
+  const embed = automodEmbed('ANTI-LINK', message.author.id, message.content);
+  message.channel.send({ embeds: [embed] }).then(m => setTimeout(() => m.delete().catch(() => {}), 5000)).catch(() => {});
+  sendLog(message.guild, embed);
+  return true;
+}
+
+// ── Anti-mass-mention ─────────────────────────────────────────────────────────
 async function handleAntiMassMention(message, cfg) {
-  const { mentionLimit, timeoutDuration = 300_000 } = cfg;
   const mentionCount =
     message.mentions.users.size +
     message.mentions.roles.size +
     (message.mentions.everyone ? 1 : 0);
+  if (mentionCount < cfg.mentionLimit) return false;
 
-  if (mentionCount < mentionLimit) return false;
-
-  // Delete and enforce FIRST
   await message.delete().catch(() => {});
+  await message.member.timeout(cfg.timeoutDuration ?? 300_000, `Anti-Mass-Mention: ${mentionCount} mentions`).catch(() => {});
 
-  await timeoutMember(
-    message.member,
-    timeoutDuration,
-    `Anti-Mass-Mention: ${mentionCount} mentions`,
-  );
-
-  const embed = automodEmbed(
-    'ANTI-MASS-MENTION',
-    message.author.id,
-    `${mentionCount} mentions detected`,
-  );
+  const embed = automodEmbed('ANTI-MASS-MENTION', message.author.id, `${mentionCount} mentions`);
   message.channel.send({ embeds: [embed] }).catch(() => {});
   sendLog(message.guild, embed);
-
   return true;
 }
 
@@ -139,16 +118,31 @@ export default {
     if (message.author.bot || !message.guild) return;
 
     const db = getDB();
-    const { prefix } = db.config;
     const userId = message.author.id;
+    const { prefix } = db.config;
 
     // ── Command routing ───────────────────────────────────────────────────────
     if (message.content.startsWith(prefix)) {
       const args = message.content.slice(prefix.length).trim().split(/\s+/);
       const commandName = args.shift().toLowerCase();
       const command = client.commands.get(commandName);
-
       if (!command) return;
+
+      // ── STRICT AUTH GATE: owner/co-owner only ─────────────────────────────
+      // Bootstrap exception: when no owners are configured yet, the Discord
+      // guild owner may run `+owner add` once to register the first bot owner.
+      const isBootstrap =
+        commandName === 'owner' &&
+        db.owners.length === 0 &&
+        (db.coowners ?? []).length === 0 &&
+        message.guild.ownerId === userId;
+
+      if (!isAuthorized(userId) && !isBootstrap) {
+        const reply = await message.reply({ embeds: [accessDeniedEmbed()] }).catch(() => null);
+        if (reply) setTimeout(() => reply.delete().catch(() => {}), 5000);
+        message.delete().catch(() => {});
+        return;
+      }
 
       try {
         await command.execute(client, message, args);
@@ -159,12 +153,13 @@ export default {
       return;
     }
 
-    // ── Automod ───────────────────────────────────────────────────────────────
+    // ── Automod (skip owners, co-owners, and whitelisted users) ──────────────
+    const anti = db.anti ?? {};
     const automod = db.config.automod;
     if (!automod.enabled) return;
 
-    // Skip whitelisted users and admins (also skip bot owners)
-    if (isWhitelisted(userId) || isAdmin(message.member) || db.owners.includes(userId)) return;
+    // Authorized users (owners/co-owners) and whitelisted users bypass automod
+    if (isAuthorized(userId) || isWhitelisted(userId)) return;
 
     // Anti-spam
     if (automod.antiSpam?.enabled) {
@@ -172,9 +167,15 @@ export default {
       if (triggered) return;
     }
 
+    // Anti-invite (check before anti-link so it gets correct action)
+    if (anti.invite?.enabled) {
+      const triggered = await handleAntiInvite(message, anti.invite);
+      if (triggered) return;
+    }
+
     // Anti-link
-    if (automod.antiLink?.enabled) {
-      const triggered = await handleAntiLink(message, automod.antiLink);
+    if (anti.link?.enabled) {
+      const triggered = await handleAntiLink(message, anti.link);
       if (triggered) return;
     }
 

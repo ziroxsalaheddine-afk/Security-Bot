@@ -16,10 +16,6 @@
         "action": "timeout",
         "timeoutDuration": 300000
       },
-      "antiLink": {
-        "enabled": true,
-        "deleteMessage": true
-      },
       "antiMassMention": {
         "enabled": true,
         "mentionLimit": 5,
@@ -32,6 +28,24 @@
       "action": "kick"
     }
   },
+  "anti": {
+    "link": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "invite": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "webhook": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "bot": {
+      "enabled": true,
+      "action": "kick"
+    }
+  },
   "whitelist": {
     "users": [],
     "roles": [],
@@ -41,11 +55,13 @@
     "users": []
   },
   "owners": [],
+  "coowners": [],
   "quarantine": {
     "users": {},
     "role": null
   },
   "logs": {
     "channelId": null
-  }
+  },
+  "backups": {}
 }

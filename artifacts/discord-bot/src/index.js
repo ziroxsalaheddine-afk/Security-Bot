@@ -35,6 +35,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildBans,
     GatewayIntentBits.GuildModeration,
+    GatewayIntentBits.GuildWebhooks,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.GuildMember],
 });

@@ -26,6 +26,50 @@ export function saveDB() {
   writeFileSync(DB_PATH, JSON.stringify(_cache, null, 2), 'utf-8');
 }
 
+// ── Owner helpers ─────────────────────────────────────────────────────────────
+
+export function isOwner(userId) {
+  const db = getDB();
+  return db.owners.includes(userId);
+}
+
+export function addOwner(userId) {
+  const db = getDB();
+  if (!db.owners.includes(userId)) {
+    db.owners.push(userId);
+    saveDB();
+  }
+}
+
+export function removeOwner(userId) {
+  const db = getDB();
+  db.owners = db.owners.filter(id => id !== userId);
+  saveDB();
+}
+
+// ── Co-owner helpers ──────────────────────────────────────────────────────────
+
+export function isCoOwner(userId) {
+  const db = getDB();
+  return db.coowners.includes(userId);
+}
+
+export function addCoOwner(userId) {
+  const db = getDB();
+  if (!db.coowners) db.coowners = [];
+  if (!db.coowners.includes(userId)) {
+    db.coowners.push(userId);
+    saveDB();
+  }
+}
+
+export function removeCoOwner(userId) {
+  const db = getDB();
+  if (!db.coowners) db.coowners = [];
+  db.coowners = db.coowners.filter(id => id !== userId);
+  saveDB();
+}
+
 // ── Whitelist helpers ─────────────────────────────────────────────────────────
 
 export function isWhitelisted(userId) {
@@ -68,29 +112,8 @@ export function removeBlacklist(userId) {
   saveDB();
 }
 
-// ── Owner helpers ─────────────────────────────────────────────────────────────
-
-export function isOwner(userId) {
-  const db = getDB();
-  return db.owners.includes(userId);
-}
-
-export function addOwner(userId) {
-  const db = getDB();
-  if (!db.owners.includes(userId)) {
-    db.owners.push(userId);
-    saveDB();
-  }
-}
-
-export function removeOwner(userId) {
-  const db = getDB();
-  db.owners = db.owners.filter(id => id !== userId);
-  saveDB();
-}
-
 // ── Quarantine helpers ────────────────────────────────────────────────────────
-// Quarantine is keyed by `${guildId}:${userId}` to prevent cross-guild collision.
+// Keyed by `${guildId}:${userId}` to prevent cross-guild collision.
 
 function quarantineKey(guildId, userId) {
   return `${guildId}:${userId}`;
@@ -101,7 +124,6 @@ export function isQuarantined(userId, guildId = null) {
   if (guildId) {
     return !!db.quarantine.users[quarantineKey(guildId, userId)];
   }
-  // Legacy global check (for commands that don't pass guildId)
   return Object.keys(db.quarantine.users).some(k => k.endsWith(`:${userId}`));
 }
 
@@ -122,7 +144,6 @@ export function removeQuarantine(userId, guildId = null) {
   if (guildId) {
     delete db.quarantine.users[quarantineKey(guildId, userId)];
   } else {
-    // Remove all quarantine entries for this user across guilds
     for (const key of Object.keys(db.quarantine.users)) {
       if (key.endsWith(`:${userId}`)) delete db.quarantine.users[key];
     }
@@ -144,6 +165,52 @@ export function setQuarantineRole(roleId) {
 export function getQuarantineRole() {
   const db = getDB();
   return db.quarantine.role;
+}
+
+// ── Anti config helpers ───────────────────────────────────────────────────────
+
+export function getAntiConfig(type) {
+  const db = getDB();
+  if (!db.anti) db.anti = {};
+  return db.anti[type] ?? { enabled: false, action: 'delete' };
+}
+
+export function setAntiConfig(type, field, value) {
+  const db = getDB();
+  if (!db.anti) db.anti = {};
+  if (!db.anti[type]) db.anti[type] = { enabled: true, action: 'delete' };
+  db.anti[type][field] = value;
+  saveDB();
+}
+
+// ── Backup helpers ────────────────────────────────────────────────────────────
+
+export function generateBackupId() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+export function saveBackup(id, data) {
+  const db = getDB();
+  if (!db.backups) db.backups = {};
+  db.backups[id] = data;
+  saveDB();
+}
+
+export function getBackup(id) {
+  const db = getDB();
+  return db.backups?.[id] ?? null;
+}
+
+export function listBackups() {
+  const db = getDB();
+  return db.backups ?? {};
+}
+
+export function deleteBackup(id) {
+  const db = getDB();
+  if (!db.backups) return;
+  delete db.backups[id];
+  saveDB();
 }
 
 // ── Config helpers ────────────────────────────────────────────────────────────
