@@ -1,0 +1,69 @@
+{
+  "owners": [
+    "1186279659206357012"
+  ],
+  "coowners": [],
+  "whitelist": {
+    "users": [],
+    "roles": [],
+    "channels": []
+  },
+  "blacklist": {
+    "users": []
+  },
+  "quarantine": {
+    "users": {},
+    "role": null
+  },
+  "anti": {
+    "link": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "invite": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "webhook": {
+      "enabled": true,
+      "action": "delete"
+    },
+    "bot": {
+      "enabled": true,
+      "action": "kick"
+    }
+  },
+  "config": {
+    "prefix": "+",
+    "antinuke": {
+      "enabled": true,
+      "threshold": 3,
+      "interval": 10000,
+      "action": "quarantine"
+    },
+    "automod": {
+      "enabled": true,
+      "antiSpam": {
+        "enabled": true,
+        "messageLimit": 5,
+        "interval": 3000,
+        "action": "timeout",
+        "timeoutDuration": 300000
+      },
+      "antiMassMention": {
+        "enabled": true,
+        "mentionLimit": 5,
+        "action": "timeout"
+      }
+    },
+    "altProtection": {
+      "enabled": true,
+      "minAccountAge": 7,
+      "action": "kick"
+    }
+  },
+  "logs": {
+    "channelId": null
+  },
+  "backups": {}
+}
