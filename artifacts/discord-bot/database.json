@@ -1,0 +1,51 @@
+{
+  "config": {
+    "prefix": "+",
+    "antinuke": {
+      "enabled": true,
+      "threshold": 3,
+      "interval": 10000,
+      "action": "quarantine"
+    },
+    "automod": {
+      "enabled": true,
+      "antiSpam": {
+        "enabled": true,
+        "messageLimit": 5,
+        "interval": 3000,
+        "action": "timeout",
+        "timeoutDuration": 300000
+      },
+      "antiLink": {
+        "enabled": true,
+        "deleteMessage": true
+      },
+      "antiMassMention": {
+        "enabled": true,
+        "mentionLimit": 5,
+        "action": "timeout"
+      }
+    },
+    "altProtection": {
+      "enabled": true,
+      "minAccountAge": 7,
+      "action": "kick"
+    }
+  },
+  "whitelist": {
+    "users": [],
+    "roles": [],
+    "channels": []
+  },
+  "blacklist": {
+    "users": []
+  },
+  "owners": [],
+  "quarantine": {
+    "users": {},
+    "role": null
+  },
+  "logs": {
+    "channelId": null
+  }
+}

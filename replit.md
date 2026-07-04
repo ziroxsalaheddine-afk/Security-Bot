@@ -1,6 +1,6 @@
-# [Project name]
+# Guardian Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A comprehensive Discord security bot with Anti-Nuke, Advanced Automod, and Raid/Alt-Account Protection. Prefix: `+`
 
 ## Run & Operate
 
