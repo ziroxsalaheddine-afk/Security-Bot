@@ -54,7 +54,7 @@
   "blacklist": {
     "users": []
   },
-  "owners": [],
+  "owners": ["1186279659206357012"],
   "coowners": [],
   "quarantine": {
     "users": {},
