@@ -20,7 +20,7 @@ from utils import db
 log = logging.getLogger("guardian.help")
 
 FOOTER = "© 2026 — Advanced Security by Trossard Shield"
-BANNER = "https://i.imgur.com/wSTFkRM.gif"   # dark shield banner — swap freely
+BANNER = "https://cdn.discordapp.com/attachments/1496697545190015029/1523380596364017845/b94e18ea40626f10bc67eaba042ec415_1.gif?ex=6a4be63d&is=6a4a94bd&hm=c9534b299c54fccda7bef91119fcb5b79e323a2a683f4aac7f37c34d078eceda&"
 PAGE_SIZE = 4
 
 # ── Category definitions ──────────────────────────────────────────────────────
