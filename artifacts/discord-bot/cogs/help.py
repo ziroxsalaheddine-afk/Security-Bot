@@ -29,7 +29,7 @@ PAGE_SIZE = 4
 #   Each entry: ("+command_name", "Description text")
 CATEGORIES: dict[str, dict] = {
     "🛡️ Anti-Nuke & Security": {
-        "emoji": "🛡️",
+        "emoji": "<:vrs_security:1496957017858773133>",
         "color": 0x1C1C3A,
         "tagline": "Real-time threat annihilation — zero-latency, zero mercy.",
         "commands": [
@@ -49,7 +49,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "🔄 Recovery & Deep Clone": {
-        "emoji": "🔄",
+        "emoji": "<a:vrs_blackstar:1483194986622091505>",
         "color": 0x0D2B0D,
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
@@ -60,7 +60,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "🔍 Investigation & Utility": {
-        "emoji": "🔍",
+        "emoji": "<a:vrs_working:1498377074434506762>",
         "color": 0x0D0D2B,
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
@@ -134,7 +134,7 @@ class CategorySelect(discord.ui.Select):
                 label="Home",
                 value="__home__",
                 description="Overview & feature summary",
-                emoji="🏠",
+                emoji="<a:vrs_blackearth:1483195023280443577>",
             )
         ]
         for name, data in CATEGORIES.items():
@@ -163,7 +163,7 @@ class CategorySelect(discord.ui.Select):
 
 class PrevButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(emoji="⬅️", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+        super().__init__(emoji="<a:vrs_arrow2:1483376240919314588>", style=discord.ButtonStyle.secondary, row=1, disabled=True)
 
     async def callback(self, interaction: discord.Interaction):
         v: HelpView = self.view  # type: ignore[assignment]
@@ -174,7 +174,7 @@ class PrevButton(discord.ui.Button):
 
 class PageLabel(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="◆", style=discord.ButtonStyle.primary, row=1, disabled=True)
+        super().__init__(emoji="<a:ugh:1497199349460107425>", style=discord.ButtonStyle.primary, row=1, disabled=True)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -182,7 +182,7 @@ class PageLabel(discord.ui.Button):
 
 class NextButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(emoji="➡️", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+        super().__init__(emoji="<a:arrowco:1401177337034309702>", style=discord.ButtonStyle.secondary, row=1, disabled=True)
 
     async def callback(self, interaction: discord.Interaction):
         v: HelpView = self.view  # type: ignore[assignment]
@@ -224,7 +224,7 @@ class HelpView(discord.ui.View):
         self._prev.disabled  = on_home or self.current_page <= 0
         self._next.disabled  = on_home or self.current_page >= tp - 1
         self._label.disabled = True
-        self._label.label    = "◆" if on_home else f"{self.current_page + 1}/{tp}"
+        self._label.label    = f"{self.current_page + 1}/{tp}" if not on_home else None
 
     def _embed(self) -> discord.Embed:
         if self.current_category is None:
