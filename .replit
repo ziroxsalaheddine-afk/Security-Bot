@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "bash"]
+modules = ["nodejs-20", "web", "bash", "python-3.11"]
 
 [deployment]
 router = "application"
@@ -33,7 +33,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "pnpm --filter @workspace/discord-bot run dev"
+args = "cd artifacts/discord-bot && python main.py"
 
 [[workflows.workflow]]
 name = "Start application"

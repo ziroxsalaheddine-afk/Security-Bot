@@ -1,38 +1,8 @@
 {
+  "whitelist": [],
   "owners": [
-    "1186279659206357012"
+    1186279659206357012
   ],
-  "coowners": [],
-  "whitelist": {
-    "users": [],
-    "roles": [],
-    "channels": []
-  },
-  "blacklist": {
-    "users": []
-  },
-  "quarantine": {
-    "users": {},
-    "role": null
-  },
-  "anti": {
-    "link": {
-      "enabled": true,
-      "action": "delete"
-    },
-    "invite": {
-      "enabled": true,
-      "action": "delete"
-    },
-    "webhook": {
-      "enabled": true,
-      "action": "delete"
-    },
-    "bot": {
-      "enabled": true,
-      "action": "kick"
-    }
-  },
   "config": {
     "prefix": "+",
     "antinuke": {
@@ -42,7 +12,6 @@
       "action": "quarantine"
     },
     "automod": {
-      "enabled": true,
       "antiSpam": {
         "enabled": true,
         "messageLimit": 5,
@@ -50,6 +19,26 @@
         "action": "timeout",
         "timeoutDuration": 300000
       },
+      "antiLink": {
+        "enabled": true,
+        "allowedDomains": [
+          "youtube.com",
+          "youtu.be",
+          "discord.com",
+          "discord.gg",
+          "twitch.tv",
+          "twitter.com",
+          "x.com",
+          "github.com"
+        ]
+      },
+      "antiRaid": {
+        "enabled": true,
+        "joinThreshold": 10,
+        "joinInterval": 10,
+        "action": "kick"
+      },
+      "enabled": true,
       "antiMassMention": {
         "enabled": true,
         "mentionLimit": 5,
@@ -64,6 +53,10 @@
   },
   "logs": {
     "channelId": null
+  },
+  "quarantine": {
+    "users": {},
+    "role": null
   },
   "backups": {}
 }
