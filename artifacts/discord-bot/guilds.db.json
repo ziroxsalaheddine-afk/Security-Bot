@@ -1,0 +1,40 @@
+{
+  "1373327031827300442": {
+    "antinuke": {
+      "enabled": true,
+      "threshold": 3,
+      "interval": 10,
+      "action": "ban",
+      "autoRestore": true,
+      "clearRoles": true
+    },
+    "automod": {
+      "antiSpam": {
+        "enabled": true,
+        "messageLimit": 5,
+        "interval": 3
+      },
+      "antiLink": {
+        "enabled": true,
+        "scanInvites": true,
+        "allowedDomains": [
+          "discord.com",
+          "discord.gg"
+        ]
+      },
+      "antiRaid": {
+        "enabled": true,
+        "joinThreshold": 10,
+        "joinInterval": 10,
+        "action": "kick"
+      }
+    },
+    "whitelist": {
+      "users": [],
+      "roles": []
+    },
+    "logs": {
+      "channelId": null
+    }
+  }
+}

@@ -25,6 +25,7 @@ COGS = [
     "cogs.automod",
     "cogs.admin",
     "cogs.help",
+    "cogs.setup",
 ]
 
 
