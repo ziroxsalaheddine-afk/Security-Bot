@@ -76,29 +76,21 @@ CATEGORIES: dict[str, dict] = {
 
 def _home_embed() -> discord.Embed:
     e = discord.Embed(
-        title="Trossard 🛡️ — Ultimate Server Protection",
+        title="Trossard 🛡️ — System Overview",
         description=(
             "```\n"
-            "◆  GUARDIAN PROTOCOL ACTIVE — ALL MODULES ONLINE\n"
+            "✦ GUARDIAN PROTOCOL : ONLINE & SECURE\n"
             "```\n"
-            "> Trossard is the **unbreakable shield** between your community and total\n"
-            "> destruction. Built for **anti-nuke perfection** — threats are neutralized\n"
-            "> before they can finish executing.\n\n"
-            "Engineered with **sub-50ms** gateway audit-event detection, surgical\n"
-            "role & channel auto-recovery, and a zero-trust architecture that gives\n"
-            "admins absolute **peace of mind** around the clock.\n\n"
-            "**⚡  Active Security Modules**\n"
-            "` 🛡️ `  Anti-Nuke  ·  Gateway Audit Events (not REST)\n"
-            "` 🔄 `  Deep Clone  ·  Instant Role & Channel Recovery\n"
-            "` 🔒 `  Anti-Raid  ·  Auto-Lockdown & Raider Punishment\n"
-            "` 🔍 `  Alt Detection  ·  Invite Scanner  ·  Anti-Link\n\n"
-            "**Use the dropdown below** to explore every command category.\n"
-            "-# If you need assistance, use the `+support` command to contact the developers."
+            "Trossard is your absolute shield against nukes, raids, and server threats. "
+            "Threats are neutralized instantly.\n\n"
+            "**⚡ Active Modules:**\n"
+            "Anti-Nuke • Deep Clone • Anti-Raid • Link Filter\n\n"
+            "Use the dropdown menu below to explore commands."
         ),
         color=0x0A0A1E,
         timestamp=datetime.now(timezone.utc),
     )
-    e.set_image(url=BANNER)
+    e.set_thumbnail(url=BANNER)
     e.set_footer(text=FOOTER)
     return e
 
