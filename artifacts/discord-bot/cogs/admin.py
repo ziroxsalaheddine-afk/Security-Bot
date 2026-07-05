@@ -1,6 +1,7 @@
 """
-Admin Cog — whitelist/owner management, help, setlog, scaninvites, config commands.
+Admin Cog — whitelist/owner management, setlog, scaninvites, config commands.
 All commands silently ignore non-whitelisted users.
+Help command lives in cogs/help.py.
 """
 
 import logging
@@ -13,62 +14,10 @@ from utils import db, embeds
 
 log = logging.getLogger("guardian.admin")
 
-HELP_TEXT = {
-    "🔄  Clone / Restore": [
-        ("`+loadrole <@role>`",       "Clone a role + re-assign to all original members"),
-        ("`+clonerole <@role>`",      "Alias for +loadrole"),
-        ("`+loadchannel <#ch>`",      "Clone a channel with all permission overwrites"),
-        ("`+clonechannel <#ch>`",     "Alias for +loadchannel"),
-    ],
-    "🛡️  Anti-Nuke": [
-        ("`+antinuke`",               "Show current anti-nuke config"),
-        ("`+antinuke on/off`",        "Enable / disable anti-nuke"),
-        ("`+antinuke threshold <n>`", "Destructive actions before punishment"),
-        ("`+antinuke interval <s>`",  "Time window in seconds"),
-        ("`+antinuke action <…>`",    "Punishment: ban / kick / quarantine"),
-    ],
-    "🤖  AutoMod": [
-        ("`+automod`",                "Show automod config"),
-        ("`+automod antilink on/off`","Toggle anti-link"),
-        ("`+automod antispam on/off`","Toggle anti-spam"),
-        ("`+automod antiraid on/off`","Toggle anti-raid"),
-    ],
-    "🔒  Server": [
-        ("`+lockdown`",               "Lock all text channels"),
-        ("`+unlock`",                 "Lift lockdown"),
-        ("`+setlog <#ch>`",           "Set security log channel"),
-        ("`+scaninvites`",            "Flag suspicious invites"),
-        ("`+userinfo [@user]`",       "Show user details"),
-    ],
-    "👥  Whitelist / Owners": [
-        ("`+whitelist add/remove <@u>`", "Manage whitelist"),
-        ("`+whitelist list`",            "Show whitelisted users"),
-        ("`+owner add/remove <@u>`",     "Manage owners (owners only)"),
-        ("`+owner list`",                "Show owners"),
-    ],
-}
-
 
 class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-    # ── Help ──────────────────────────────────────────────────────────────────
-
-    @commands.command(name="help")
-    async def help_cmd(self, ctx: commands.Context):
-        if not db.is_whitelisted(ctx.author.id):
-            return
-        embed = discord.Embed(
-            title="⚔️  Guardian Bot — Command Reference",
-            description="All commands require being on the **whitelist**. Prefix: `+`",
-            color=0xC0C0C0,
-        )
-        for section, cmds in HELP_TEXT.items():
-            value = "\n".join(f"{cmd} — {desc}" for cmd, desc in cmds)
-            embed.add_field(name=section, value=value, inline=False)
-        embed.set_footer(text="Guardian Security System v2.0 • Python / discord.py")
-        await ctx.send(embed=embed)
 
     # ── Whitelist ─────────────────────────────────────────────────────────────
 

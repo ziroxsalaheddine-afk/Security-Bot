@@ -24,6 +24,7 @@ COGS = [
     "cogs.antiraid",
     "cogs.automod",
     "cogs.admin",
+    "cogs.help",
 ]
 
 
