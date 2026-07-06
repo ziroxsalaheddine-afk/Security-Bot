@@ -27,6 +27,7 @@ COGS = [
     "cogs.help",
     "cogs.setup",
     "cogs.voice",
+    "cogs.owner",
 ]
 
 
