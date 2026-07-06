@@ -3,12 +3,13 @@ Interactive Help System — Trossard
 ═══════════════════════════════════
 discord.ui.View with:
   • Category Select Menu (dropdown)
-  • ⬅️  1/X  ➡️  pagination buttons
-  • Per-category embeds with `+cmd` / ↳ desc formatting
+  • paginated command listing
+  • Per-user ownership check
   • Auto-disables after 120 s
 """
 
 import time
+import os as _os
 import logging
 from datetime import datetime, timezone
 
@@ -19,18 +20,17 @@ from utils import db
 
 log = logging.getLogger("guardian.help")
 
-import os as _os
-FOOTER = "© 2026 — Advanced Security by Trossard Shield"
-BANNER_FILE = _os.path.join(_os.path.dirname(__file__), "..", "assets", "banner.gif")
+FOOTER       = "© 2026 — Advanced Security by Trossard Shield"
+BANNER_FILE  = _os.path.join(_os.path.dirname(__file__), "..", "assets", "banner.gif")
 BANNER_ATTACH = "attachment://banner.gif"
-PAGE_SIZE = 4
+PAGE_SIZE    = 4
+COL          = 0x2B2D31
 
-# ── Category definitions ──────────────────────────────────────────────────────
-#   Each entry: ("+command_name", "Description text")
+
+# ── Category definitions ───────────────────────────────────────────────────────
 CATEGORIES: dict[str, dict] = {
-    "🛡️ Anti-Nuke & Security": {
+    "Anti-Nuke & Security": {
         "emoji": "<:vrs_security:1496957017858773133>",
-        "color": 0x1C1C3A,
         "tagline": "Real-time threat annihilation — zero-latency, zero mercy.",
         "commands": [
             ("+antinuke",                  "Displays the current anti-nuke configuration panel."),
@@ -48,25 +48,23 @@ CATEGORIES: dict[str, dict] = {
             ("+whitelist list",            "Lists every currently whitelisted user."),
         ],
     },
-    "🔄 Recovery & Deep Clone": {
+    "Recovery & Deep Clone": {
         "emoji": "<a:vrs_blackstar:1483194986622091505>",
-        "color": 0x0D2B0D,
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
-            ("+loadrole <@role>",      "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members. Shows live execution time."),
+            ("+loadrole <@role>",      "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
             ("+clonerole <@role>",     "Alias for +loadrole — identical functionality, alternate syntax."),
             ("+loadchannel <#ch>",     "Clones a channel with every setting and all role/member permission overwrites perfectly restored."),
             ("+clonechannel <#ch>",    "Alias for +loadchannel — identical functionality, alternate syntax."),
         ],
     },
-    "🔍 Investigation & Utility": {
+    "Investigation & Utility": {
         "emoji": "<a:vrs_working:1498377074434506762>",
-        "color": 0x0D0D2B,
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
             ("+scaninvites",       "Scans all active invites and flags dangerous ones (unlimited uses, no expiry, etc.)."),
             ("+checkalt <@user>",  "Verifies a user's account age against the minimum threshold to detect alts."),
-            ("+botinfo",           "Displays Trossard's live ping, uptime, and all currently active security modules."),
+            ("+botinfo",           "Displays live ping, uptime, and all currently active security modules."),
             ("+userinfo <@user>",  "Shows full member details — roles, account age, join date, and whitelist status."),
             ("+support",           "Sends contact information to reach the Trossard development team."),
         ],
@@ -74,22 +72,19 @@ CATEGORIES: dict[str, dict] = {
 }
 
 
-# ── Embed builders ────────────────────────────────────────────────────────────
+# ── Embed builders ─────────────────────────────────────────────────────────────
 
 def _home_embed() -> discord.Embed:
     e = discord.Embed(
-        title="Trossard 🛡️ — System Overview",
+        title="Trossard — System Overview",
         description=(
-            "```\n"
-            "✦ GUARDIAN PROTOCOL : ONLINE & SECURE\n"
-            "```\n"
-            "Trossard is your absolute shield against nukes, raids, and server threats. "
-            "Threats are neutralized instantly.\n\n"
-            "**⚡ Active Modules:**\n"
-            "Anti-Nuke • Deep Clone • Anti-Raid • Link Filter\n\n"
-            "Use the dropdown menu below to explore commands."
+            "```\nGUARDIAN PROTOCOL : ONLINE & SECURE\n```\n"
+            "• __**Active Modules**__\n"
+            "Anti-Nuke · Deep Clone · Anti-Raid · Link Filter\n\n"
+            "• __**Usage**__\n"
+            "Use the dropdown below to explore all available commands."
         ),
-        color=0x0A0A1E,
+        color=COL,
         timestamp=datetime.now(timezone.utc),
     )
     e.set_thumbnail(url=BANNER_ATTACH)
@@ -102,30 +97,29 @@ def _fmt_commands(cmds: list[tuple], page: int) -> str:
     chunk = cmds[start : start + PAGE_SIZE]
     lines = []
     for cmd, desc in chunk:
-        lines.append(f"`{cmd}`\n↳ {desc}")
+        lines.append(f"• __**{cmd}**__\n{desc}")
     return "\n\n".join(lines)
 
 
 def _category_embed(cat_name: str, page: int) -> discord.Embed:
-    cat = CATEGORIES[cat_name]
-    cmds = cat["commands"]
+    cat   = CATEGORIES[cat_name]
+    cmds  = cat["commands"]
     total = max(1, (len(cmds) + PAGE_SIZE - 1) // PAGE_SIZE)
 
     e = discord.Embed(
         title=cat_name,
         description=(
-            f"*{cat['tagline']}*\n"
-            f"{'─' * 38}\n\n"
+            f"*{cat['tagline']}*\n\n"
             f"{_fmt_commands(cmds, page)}"
         ),
-        color=cat["color"],
+        color=COL,
         timestamp=datetime.now(timezone.utc),
     )
     e.set_footer(text=f"{FOOTER}   ·   Page {page + 1} of {total}")
     return e
 
 
-# ── UI components ─────────────────────────────────────────────────────────────
+# ── UI components ──────────────────────────────────────────────────────────────
 
 class CategorySelect(discord.ui.Select):
     def __init__(self):
@@ -147,7 +141,7 @@ class CategorySelect(discord.ui.Select):
                 )
             )
         super().__init__(
-            placeholder="📂   Select a command category...",
+            placeholder="Select a command category...",
             options=opts,
             row=0,
         )
@@ -163,7 +157,12 @@ class CategorySelect(discord.ui.Select):
 
 class PrevButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(emoji="<a:vrs_arrow2:1483376240919314588>", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+        super().__init__(
+            emoji="<a:vrs_arrow2:1483376240919314588>",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+            disabled=True,
+        )
 
     async def callback(self, interaction: discord.Interaction):
         v: HelpView = self.view  # type: ignore[assignment]
@@ -174,7 +173,12 @@ class PrevButton(discord.ui.Button):
 
 class PageLabel(discord.ui.Button):
     def __init__(self):
-        super().__init__(emoji="<a:ugh:1497199349460107425>", style=discord.ButtonStyle.primary, row=1, disabled=True)
+        super().__init__(
+            emoji="<a:ugh:1497199349460107425>",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+            disabled=True,
+        )
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
@@ -182,7 +186,12 @@ class PageLabel(discord.ui.Button):
 
 class NextButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(emoji="<a:arrowco:1401177337034309702>", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+        super().__init__(
+            emoji="<a:arrowco:1401177337034309702>",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+            disabled=True,
+        )
 
     async def callback(self, interaction: discord.Interaction):
         v: HelpView = self.view  # type: ignore[assignment]
@@ -195,9 +204,9 @@ class NextButton(discord.ui.Button):
 class HelpView(discord.ui.View):
     def __init__(self, author_id: int):
         super().__init__(timeout=120)
-        self.author_id = author_id
+        self.author_id        = author_id
         self.current_category: str | None = None
-        self.current_page = 0
+        self.current_page     = 0
         self.message: discord.Message | None = None
 
         self._select = CategorySelect()
@@ -210,8 +219,6 @@ class HelpView(discord.ui.View):
 
         self._refresh()
 
-    # ── Internal ──────────────────────────────────────────────────────────────
-
     def _total_pages(self) -> int:
         if self.current_category is None:
             return 1
@@ -219,7 +226,7 @@ class HelpView(discord.ui.View):
         return max(1, (len(cmds) + PAGE_SIZE - 1) // PAGE_SIZE)
 
     def _refresh(self):
-        tp = self._total_pages()
+        tp      = self._total_pages()
         on_home = self.current_category is None
         self._prev.disabled  = on_home or self.current_page <= 0
         self._next.disabled  = on_home or self.current_page >= tp - 1
@@ -231,12 +238,10 @@ class HelpView(discord.ui.View):
             return _home_embed()
         return _category_embed(self.current_category, self.current_page)
 
-    # ── Checks / lifecycle ────────────────────────────────────────────────────
-
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "❌  This help menu belongs to someone else.", ephemeral=True
+                "This help menu belongs to someone else.", ephemeral=True
             )
             return False
         return True
@@ -251,14 +256,12 @@ class HelpView(discord.ui.View):
                 pass
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
+# ── Cog ────────────────────────────────────────────────────────────────────────
 
 class Help(commands.Cog):
     def __init__(self, bot: commands.Bot):
-        self.bot = bot
+        self.bot    = bot
         self._start = time.time()
-
-    # ── +help ─────────────────────────────────────────────────────────────────
 
     @commands.command(name="help")
     async def help_cmd(self, ctx: commands.Context):
@@ -268,108 +271,93 @@ class Help(commands.Cog):
         banner = discord.File(BANNER_FILE, filename="banner.gif")
         view.message = await ctx.send(file=banner, embed=_home_embed(), view=view)
 
-    # ── +checkalt ─────────────────────────────────────────────────────────────
-
     @commands.command(name="checkalt")
     async def checkalt(self, ctx: commands.Context, member: discord.Member):
         if not db.is_whitelisted(ctx.author.id):
             return
-        age = (discord.utils.utcnow() - member.created_at).days
-        cfg = db.get_config().get("altProtection", {})
+        age     = (discord.utils.utcnow() - member.created_at).days
+        cfg     = db.get_config().get("altProtection", {})
         min_age = cfg.get("minAccountAge", 7)
-        is_alt = age < min_age
+        is_alt  = age < min_age
 
         e = discord.Embed(
-            title=f"🔍  Alt Check — {member}",
-            color=0xC0392B if is_alt else 0x1A5C2A,
+            title=f"Alt Check — {member}",
+            description=(
+                f"• __**Account Age**__\n`{age}d`\n\n"
+                f"• __**Minimum Required**__\n`{min_age}d`\n\n"
+                f"• __**Account Created**__\n{discord.utils.format_dt(member.created_at, 'F')}\n\n"
+                f"• __**Verdict**__\n{'`LIKELY ALT`' if is_alt else '`CLEAN`'}"
+            ),
+            color=COL,
             timestamp=datetime.now(timezone.utc),
         )
         e.set_thumbnail(url=member.display_avatar.url)
-        e.add_field(name="Account Age",   value=f"`{age}d`",      inline=True)
-        e.add_field(name="Min Required",  value=f"`{min_age}d`",  inline=True)
-        e.add_field(
-            name="Verdict",
-            value="`⚠️  LIKELY ALT`" if is_alt else "`✅  CLEAN`",
-            inline=True,
-        )
-        e.add_field(
-            name="Account Created",
-            value=discord.utils.format_dt(member.created_at, "F"),
-            inline=False,
-        )
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
-
-    # ── +botinfo ──────────────────────────────────────────────────────────────
 
     @commands.command(name="botinfo")
     async def botinfo(self, ctx: commands.Context):
         if not db.is_whitelisted(ctx.author.id):
             return
-        uptime_s = int(time.time() - self._start)
-        h, r = divmod(uptime_s, 3600)
-        m, s = divmod(r, 60)
+        uptime_s   = int(time.time() - self._start)
+        h, r       = divmod(uptime_s, 3600)
+        m, s       = divmod(r, 60)
         uptime_str = f"{h}h {m}m {s}s"
         latency_ms = round(self.bot.latency * 1000, 2)
 
-        cfg = db.get_config()
-        an  = cfg.get("antinuke", {})
-        am  = cfg.get("automod", {})
-
+        cfg     = db.get_config()
+        an      = cfg.get("antinuke", {})
+        am      = cfg.get("automod", {})
         modules: list[str] = []
-        if an.get("enabled", True):                               modules.append("🛡️  Anti-Nuke")
-        if am.get("antiLink", {}).get("enabled", True):          modules.append("🔗  Anti-Link")
-        if am.get("antiSpam", {}).get("enabled", True):          modules.append("🚫  Anti-Spam")
-        if am.get("antiRaid", {}).get("enabled", True):          modules.append("⚔️  Anti-Raid")
-        if cfg.get("altProtection", {}).get("enabled", True):    modules.append("🔍  Alt Protection")
+        if an.get("enabled", True):                            modules.append("Anti-Nuke")
+        if am.get("antiLink", {}).get("enabled", True):       modules.append("Anti-Link")
+        if am.get("antiSpam", {}).get("enabled", True):       modules.append("Anti-Spam")
+        if am.get("antiRaid", {}).get("enabled", True):       modules.append("Anti-Raid")
+        if cfg.get("altProtection", {}).get("enabled", True): modules.append("Alt Protection")
+
+        modules_str = "\n".join(f"└ {mod}" for mod in modules) or "`None active`"
 
         e = discord.Embed(
-            title="⚙️  Trossard — System Status",
-            color=0xC0C0C0,
+            title="Trossard — System Status",
+            description=(
+                f"• __**Latency**__\n`{latency_ms}ms`\n\n"
+                f"• __**Uptime**__\n`{uptime_str}`\n\n"
+                f"• __**Guilds**__\n`{len(self.bot.guilds)}`\n\n"
+                f"• __**Active Modules**__\n{modules_str}"
+            ),
+            color=COL,
             timestamp=datetime.now(timezone.utc),
-        )
-        e.add_field(name="🏓  Latency",  value=f"`{latency_ms}ms`",      inline=True)
-        e.add_field(name="⏱️  Uptime",   value=f"`{uptime_str}`",        inline=True)
-        e.add_field(name="🏠  Guilds",   value=f"`{len(self.bot.guilds)}`", inline=True)
-        e.add_field(
-            name="✅  Active Modules",
-            value="\n".join(f"> {mod}" for mod in modules) or "`None active`",
-            inline=False,
         )
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
-
-    # ── +support ──────────────────────────────────────────────────────────────
 
     @commands.command(name="support")
     async def support(self, ctx: commands.Context):
         e = discord.Embed(
-            title="💬  Trossard — Support",
+            title="Trossard — Support",
             description=(
-                "Need help with **Trossard**?\n\n"
+                "• __**Need Help?**__\n"
                 "Reach the development team through the official support server.\n\n"
-                "> For security incidents, run `+botinfo` and `+scaninvites` first\n"
-                "> to gather context before contacting support.\n\n"
-                "> Attach screenshots of any embeds or error messages."
+                "• __**Before Contacting**__\n"
+                "Run `+botinfo` and `+scaninvites` first to gather context.\n"
+                "Attach screenshots of any embeds or error messages."
             ),
-            color=0xC0C0C0,
+            color=COL,
             timestamp=datetime.now(timezone.utc),
         )
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
-
-    # ── Error handlers ────────────────────────────────────────────────────────
 
     @checkalt.error
     async def _checkalt_error(self, ctx, error):
         if isinstance(error, commands.MemberNotFound):
             await ctx.send(
-                embed=discord.Embed(description="❌  Member not found.", color=0xC0392B),
+                embed=discord.Embed(description="Member not found.", color=COL),
                 delete_after=5,
             )
         elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(
-                embed=discord.Embed(description="❌  Usage: `+checkalt <@user>`", color=0xC0392B),
+                embed=discord.Embed(description="Usage: `+checkalt <@user>`", color=COL),
                 delete_after=5,
             )
 

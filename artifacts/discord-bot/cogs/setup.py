@@ -28,16 +28,11 @@ log = logging.getLogger("guardian.setup")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-BANNER_FILE  = os.path.join(os.path.dirname(__file__), "..", "assets", "banner.gif")
+BANNER_FILE   = os.path.join(os.path.dirname(__file__), "..", "assets", "banner.gif")
 BANNER_ATTACH = "attachment://banner.gif"
-FOOTER       = "GUARDIAN SHIELD  ·  FAST SETUP"
-TOTAL_PAGES  = 3
-
-COL_CRIMSON  = 0x8A0303
-COL_VOID     = 0x0A0A0A
-COL_TEAL     = 0x003333
-
-SEP = "─" * 42
+FOOTER        = "GUARDIAN SHIELD  ·  FAST SETUP"
+TOTAL_PAGES   = 3
+COL           = 0x2B2D31
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -48,56 +43,60 @@ def _badge(val: bool) -> str:
     return "`◉ ON `" if val else "`○ OFF`"
 
 
-def _page1_embed(guild_id: int) -> discord.Embed:
-    spam  = gdb.get_guild_value(guild_id, ["automod", "antiSpam"],  {})
-    raid  = gdb.get_guild_value(guild_id, ["automod", "antiRaid"],  {})
-    scan  = gdb.get_guild_value(guild_id, ["automod", "antiLink", "scanInvites"], True)
-
+def _base(title: str, description: str, page: int | None = None) -> discord.Embed:
+    footer = f"{FOOTER}  ·  PAGE {page} / {TOTAL_PAGES}" if page else FOOTER
     e = discord.Embed(
-        title="⚔️  SENTINEL CORE  —  Anti-Raid & Flood",
-        description=(
-            f"> Your server's **first line of defense**.\n"
-            f"> Every module below triggers in **real-time**.\n"
-            f"`{SEP}`\n"
-            f"**🔍  Scan Invites** {_badge(scan)}\n"
-            f"> Detects and removes malicious invite links before they spread.\n\n"
-            f"**🛑  Anti-Spam** {_badge(spam.get('enabled', True))}\n"
-            f"> Flood limit: **{spam.get('messageLimit', 5)} msgs** per **{spam.get('interval', 3)}s** window.\n\n"
-            f"**⚙️  Action Limits** — `{raid.get('joinThreshold', 10)} joins / {raid.get('joinInterval', 10)}s`\n"
-            f"> Punishment: **{str(raid.get('action', 'kick')).upper()}** on threshold breach."
-        ),
-        color=COL_CRIMSON,
+        title=title,
+        description=description,
+        color=COL,
         timestamp=datetime.now(timezone.utc),
     )
     e.set_thumbnail(url=BANNER_ATTACH)
-    e.set_footer(text=f"{FOOTER}  ·  PAGE 1 / {TOTAL_PAGES}")
+    e.set_footer(text=footer)
     return e
+
+
+def _page1_embed(guild_id: int) -> discord.Embed:
+    spam = gdb.get_guild_value(guild_id, ["automod", "antiSpam"],  {})
+    raid = gdb.get_guild_value(guild_id, ["automod", "antiRaid"],  {})
+    scan = gdb.get_guild_value(guild_id, ["automod", "antiLink", "scanInvites"], True)
+
+    return _base(
+        "SENTINEL CORE — Anti-Raid & Flood",
+        (
+            f"• __**Scan Invites**__\n"
+            f"Status: {_badge(scan)}\n"
+            f"Detects and removes malicious invite links before they spread.\n\n"
+            f"• __**Anti-Spam**__\n"
+            f"Status: {_badge(spam.get('enabled', True))}\n"
+            f"Flood limit: `{spam.get('messageLimit', 5)} msgs` per `{spam.get('interval', 3)}s` window.\n\n"
+            f"• __**Action Limits**__\n"
+            f"Threshold: `{raid.get('joinThreshold', 10)} joins / {raid.get('joinInterval', 10)}s`\n"
+            f"Punishment: `{str(raid.get('action', 'kick')).upper()}` on breach."
+        ),
+        page=1,
+    )
 
 
 def _page2_embed(guild_id: int) -> discord.Embed:
     domains = gdb.get_guild_value(guild_id, ["automod", "antiLink", "allowedDomains"], [])
     users   = gdb.get_whitelisted_users(guild_id)
-    preview = ("`, `".join(domains[:4]) + ("…" if len(domains) > 4 else "")) if domains else "none"
+    preview = (", ".join(f"`{d}`" for d in domains[:4]) + ("…" if len(domains) > 4 else "")) if domains else "`none`"
 
-    e = discord.Embed(
-        title="🔗  ACCESS CONTROL  —  Whitelist Management",
-        description=(
-            f"> Define **who and what** bypasses your security layers.\n"
-            f"> Every entry here is logged and auditable.\n"
-            f"`{SEP}`\n"
-            f"**🔗  Allowed Domains** — `{len(domains)} configured`\n"
-            f"> Permitted: `{preview}`\n\n"
-            f"**👥  Whitelisted Users** — `{len(users)} user(s)`\n"
-            f"> These users bypass **all** security checks unconditionally.\n\n"
-            f"**🚫  Revoke Access**\n"
-            f"> Strip whitelist privileges from a user instantly."
+    return _base(
+        "ACCESS CONTROL — Whitelist Management",
+        (
+            f"• __**Allowed Domains**__\n"
+            f"Configured: `{len(domains)}`\n"
+            f"Permitted: {preview}\n\n"
+            f"• __**Whitelisted Users**__\n"
+            f"Count: `{len(users)} user(s)`\n"
+            f"These users bypass all security checks unconditionally.\n\n"
+            f"• __**Revoke Access**__\n"
+            f"Strip whitelist privileges from a user instantly."
         ),
-        color=COL_VOID,
-        timestamp=datetime.now(timezone.utc),
+        page=2,
     )
-    e.set_thumbnail(url=BANNER_ATTACH)
-    e.set_footer(text=f"{FOOTER}  ·  PAGE 2 / {TOTAL_PAGES}")
-    return e
 
 
 def _page3_embed(guild_id: int) -> discord.Embed:
@@ -105,32 +104,28 @@ def _page3_embed(guild_id: int) -> discord.Embed:
     clear   = gdb.get_guild_value(guild_id, ["antinuke", "clearRoles"],  True)
     log_ch  = gdb.get_guild_value(guild_id, ["logs", "channelId"],       None)
 
-    e = discord.Embed(
-        title="⚡  PUNISHMENT ENGINE  —  Recovery & Logging",
-        description=(
-            f"> Configure **consequences** for malicious actors.\n"
-            f"> Guardian acts with **zero delay** when triggered.\n"
-            f"`{SEP}`\n"
-            f"**🔄  Auto-Restore** {_badge(restore)}\n"
-            f"> Re-creates deleted channels & roles with exact permission overwrites.\n\n"
-            f"**🧹  Clear Roles** {_badge(clear)}\n"
-            f"> Strips **all roles** from any admin who exceeds action thresholds.\n\n"
-            f"**📋  Log Channel** — {f'<#{log_ch}>' if log_ch else '`not configured`'}\n"
-            f"> All Guardian events are streamed here in real-time."
+    return _base(
+        "PUNISHMENT ENGINE — Recovery & Logging",
+        (
+            f"• __**Auto-Restore**__\n"
+            f"Status: {_badge(restore)}\n"
+            f"Re-creates deleted channels & roles with exact permission overwrites.\n\n"
+            f"• __**Clear Roles**__\n"
+            f"Status: {_badge(clear)}\n"
+            f"Strips all roles from any admin who exceeds action thresholds.\n\n"
+            f"• __**Log Channel**__\n"
+            f"Channel: {f'<#{log_ch}>' if log_ch else '`not configured`'}\n"
+            f"All Guardian events are streamed here in real-time."
         ),
-        color=COL_TEAL,
-        timestamp=datetime.now(timezone.utc),
+        page=3,
     )
-    e.set_thumbnail(url=BANNER_ATTACH)
-    e.set_footer(text=f"{FOOTER}  ·  PAGE 3 / {TOTAL_PAGES}")
-    return e
 
 
 def _success_embed(title: str, body: str) -> discord.Embed:
     e = discord.Embed(
-        title=f"✅  {title}",
+        title=title,
         description=body,
-        color=0x0D2B0D,
+        color=COL,
         timestamp=datetime.now(timezone.utc),
     )
     e.set_footer(text=FOOTER)
@@ -138,12 +133,14 @@ def _success_embed(title: str, body: str) -> discord.Embed:
 
 
 def _denied_embed(reason: str = "Only the setup initiator can use this.") -> discord.Embed:
-    return discord.Embed(
-        title="🛑  ACCESS DENIED",
-        description=f"> {reason}",
-        color=COL_CRIMSON,
+    e = discord.Embed(
+        title="Access Denied",
+        description=f"• __**Reason**__\n{reason}",
+        color=COL,
         timestamp=datetime.now(timezone.utc),
     )
+    e.set_footer(text=FOOTER)
+    return e
 
 
 _PAGE_BUILDERS = [_page1_embed, _page2_embed, _page3_embed]
@@ -153,7 +150,7 @@ _PAGE_BUILDERS = [_page1_embed, _page2_embed, _page3_embed]
 # MODALS
 # ══════════════════════════════════════════════════════════════════════════════
 
-class AntiSpamModal(discord.ui.Modal, title="🛑  Anti-Spam — Set Limits"):
+class AntiSpamModal(discord.ui.Modal, title="Anti-Spam — Set Limits"):
     msg_limit = discord.ui.TextInput(
         label="Message Limit",
         placeholder="e.g. 5  (messages before auto-mute)",
@@ -188,14 +185,14 @@ class AntiSpamModal(discord.ui.Modal, title="🛑  Anti-Spam — Set Limits"):
         await interaction.response.send_message(
             embed=_success_embed(
                 "Anti-Spam Updated",
-                f"> Flood limit: **{limit} messages** per **{ivl}s** window.\n"
-                "> Anti-Spam is now **ENABLED** and active.",
+                f"• __**Flood Limit**__\n`{limit} messages` per `{ivl}s` window.\n\n"
+                f"• __**Status**__\n`ENABLED` — active immediately.",
             ),
             ephemeral=True,
         )
 
 
-class ActionLimitsModal(discord.ui.Modal, title="⚙️  Action Limits — Raid Threshold"):
+class ActionLimitsModal(discord.ui.Modal, title="Action Limits — Raid Threshold"):
     threshold = discord.ui.TextInput(
         label="Join Threshold",
         placeholder="e.g. 10  (joins that trigger punishment)",
@@ -244,14 +241,14 @@ class ActionLimitsModal(discord.ui.Modal, title="⚙️  Action Limits — Raid 
         await interaction.response.send_message(
             embed=_success_embed(
                 "Action Limits Updated",
-                f"> Triggers at **{thresh} joins** within a **{ivl}s** window.\n"
-                f"> Punishment: **{act.upper()}** — live immediately.",
+                f"• __**Threshold**__\n`{thresh} joins` within `{ivl}s` window.\n\n"
+                f"• __**Punishment**__\n`{act.upper()}` — live immediately.",
             ),
             ephemeral=True,
         )
 
 
-class WhitelistDomainModal(discord.ui.Modal, title="🔗  Allow a Domain"):
+class WhitelistDomainModal(discord.ui.Modal, title="Allow a Domain"):
     domain = discord.ui.TextInput(
         label="Domain",
         placeholder="e.g. youtube.com  (no https:// needed)",
@@ -270,8 +267,8 @@ class WhitelistDomainModal(discord.ui.Modal, title="🔗  Allow a Domain"):
         await interaction.response.send_message(
             embed=_success_embed(
                 "Domain Whitelisted",
-                f"> `{clean}` is now **permitted** through the link filter.\n"
-                "> Links from this domain will no longer be blocked.",
+                f"• __**Domain**__\n`{clean}`\n\n"
+                f"• __**Effect**__\nLinks from this domain will no longer be blocked.",
             ),
             ephemeral=True,
         )
@@ -282,8 +279,6 @@ class WhitelistDomainModal(discord.ui.Modal, title="🔗  Allow a Domain"):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _AuthCheck(discord.ui.View):
-    """Mixin that restricts all interactions to a single author."""
-
     def __init__(self, author_id: int, timeout: int = 60):
         super().__init__(timeout=timeout)
         self.author_id = author_id
@@ -313,11 +308,12 @@ class WhitelistUserSelect(_AuthCheck):
         for user in select.values:
             gdb.add_whitelisted_user(self.guild_id, user.id)
             added.append(user.mention)
+        users_str = "\n".join(added)
         await interaction.response.edit_message(
             embed=_success_embed(
                 "Users Whitelisted",
-                f"> Added **{len(added)}** user(s) — they now bypass all security checks:\n"
-                + "".join(f"> • {m}\n" for m in added),
+                f"• __**Added**__\n`{len(added)} user(s)` — now bypass all security checks.\n\n"
+                f"• __**Users**__\n{users_str}",
             ),
             view=None,
         )
@@ -339,11 +335,12 @@ class RemoveUserSelect(_AuthCheck):
         for user in select.values:
             gdb.remove_whitelisted_user(self.guild_id, user.id)
             removed.append(user.mention)
+        users_str = "\n".join(removed)
         await interaction.response.edit_message(
             embed=_success_embed(
                 "Access Revoked",
-                f"> Removed **{len(removed)}** user(s) — security checks reinstated:\n"
-                + "".join(f"> • {m}\n" for m in removed),
+                f"• __**Removed**__\n`{len(removed)} user(s)` — security checks reinstated.\n\n"
+                f"• __**Users**__\n{users_str}",
             ),
             view=None,
         )
@@ -367,8 +364,8 @@ class LogChannelSelect(_AuthCheck):
         await interaction.response.edit_message(
             embed=_success_embed(
                 "Log Channel Set",
-                f"> All Guardian events will stream to {ch.mention}.\n"
-                "> This takes effect immediately.",
+                f"• __**Channel**__\n{ch.mention}\n\n"
+                f"• __**Effect**__\nAll Guardian events stream here immediately.",
             ),
             view=None,
         )
@@ -379,8 +376,6 @@ class LogChannelSelect(_AuthCheck):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _CfgButton(discord.ui.Button):
-    """Base config button — rejects non-author interactions."""
-
     def __init__(self, author_id: int, **kwargs):
         super().__init__(row=0, **kwargs)
         self.author_id = author_id
@@ -401,7 +396,6 @@ class ScanInvitesBtn(_CfgButton):
         super().__init__(
             author_id,
             label=f"Scan Invites: {'ON' if state else 'OFF'}",
-            emoji="🔍",
             style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
         )
 
@@ -412,9 +406,8 @@ class ScanInvitesBtn(_CfgButton):
         await interaction.response.send_message(
             embed=_success_embed(
                 "Scan Invites Toggled",
-                f"> Invite scanning is now **{'ENABLED' if new else 'DISABLED'}**.\n"
-                + ("> Malicious invites will be auto-removed." if new
-                   else "> ⚠️  Invite scanning is OFF — use with caution."),
+                f"• __**Status**__\n`{'ENABLED' if new else 'DISABLED'}`\n\n"
+                f"• __**Effect**__\n{'Malicious invites will be auto-removed.' if new else 'Invite scanning is OFF — use with caution.'}",
             ),
             ephemeral=True,
         )
@@ -427,8 +420,7 @@ class AntiSpamBtn(_CfgButton):
         super().__init__(
             author_id,
             label=f"Anti-Spam: {'ON' if state else 'OFF'}",
-            emoji="🛑",
-            style=discord.ButtonStyle.danger,
+            style=discord.ButtonStyle.primary,
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -443,7 +435,6 @@ class ActionLimitsBtn(_CfgButton):
         super().__init__(
             author_id,
             label="Action Limits",
-            emoji="⚙️",
             style=discord.ButtonStyle.primary,
         )
 
@@ -459,7 +450,6 @@ class WhitelistLinkBtn(_CfgButton):
         super().__init__(
             author_id,
             label="Allow Domain",
-            emoji="🔗",
             style=discord.ButtonStyle.primary,
         )
 
@@ -475,21 +465,22 @@ class WhitelistUsersBtn(_CfgButton):
         super().__init__(
             author_id,
             label="Whitelist Users",
-            emoji="👥",
-            style=discord.ButtonStyle.success,
+            style=discord.ButtonStyle.primary,
         )
 
     async def callback(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
         e = discord.Embed(
-            title="👥  ADD WHITELIST USERS",
+            title="Add Whitelist Users",
             description=(
-                f"> Select up to **10 users** to grant full bypass access.\n"
-                f"> **Warning:** Whitelisted users bypass **ALL** security checks.\n"
-                f"`{SEP}`"
+                "• __**Action**__\n"
+                "Select up to 10 users to grant full bypass access.\n\n"
+                "• __**Warning**__\n"
+                "Whitelisted users bypass all security checks unconditionally."
             ),
-            color=COL_CRIMSON,
+            color=COL,
+            timestamp=datetime.now(timezone.utc),
         )
         e.set_footer(text=FOOTER)
         await interaction.response.send_message(
@@ -505,21 +496,22 @@ class RevokeAccessBtn(_CfgButton):
         super().__init__(
             author_id,
             label="Revoke Access",
-            emoji="🚫",
-            style=discord.ButtonStyle.danger,
+            style=discord.ButtonStyle.secondary,
         )
 
     async def callback(self, interaction: discord.Interaction):
         if not await self._guard(interaction):
             return
         e = discord.Embed(
-            title="🚫  REVOKE WHITELIST ACCESS",
+            title="Revoke Whitelist Access",
             description=(
-                f"> Select users to **remove** from the bypass list.\n"
-                f"> Their security checks will be **immediately reinstated**.\n"
-                f"`{SEP}`"
+                "• __**Action**__\n"
+                "Select users to remove from the bypass list.\n\n"
+                "• __**Effect**__\n"
+                "Security checks will be immediately reinstated."
             ),
-            color=COL_VOID,
+            color=COL,
+            timestamp=datetime.now(timezone.utc),
         )
         e.set_footer(text=FOOTER)
         await interaction.response.send_message(
@@ -536,7 +528,6 @@ class AutoRestoreBtn(_CfgButton):
         super().__init__(
             author_id,
             label=f"Auto-Restore: {'ON' if state else 'OFF'}",
-            emoji="🔄",
             style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
         )
 
@@ -547,10 +538,10 @@ class AutoRestoreBtn(_CfgButton):
         await interaction.response.send_message(
             embed=_success_embed(
                 "Auto-Restore Toggled",
-                ("> Deleted channels & roles will be **automatically re-created**\n"
-                 "> with exact permission overwrites preserved."
-                 if new else
-                 "> ⚠️  Auto-Restore is **OFF** — deleted structures must be recovered manually."),
+                f"• __**Status**__\n`{'ENABLED' if new else 'DISABLED'}`\n\n"
+                f"• __**Effect**__\n"
+                + ("Deleted channels & roles will be automatically re-created with exact permissions."
+                   if new else "Deleted structures must be recovered manually."),
             ),
             ephemeral=True,
         )
@@ -563,7 +554,6 @@ class ClearRolesBtn(_CfgButton):
         super().__init__(
             author_id,
             label=f"Clear Roles: {'ON' if state else 'OFF'}",
-            emoji="🧹",
             style=discord.ButtonStyle.success if state else discord.ButtonStyle.secondary,
         )
 
@@ -574,9 +564,10 @@ class ClearRolesBtn(_CfgButton):
         await interaction.response.send_message(
             embed=_success_embed(
                 "Clear Roles Toggled",
-                ("> Admins exceeding action limits will have **ALL roles stripped** immediately."
-                 if new else
-                 "> ⚠️  Role clearing is **OFF** — offending admins keep their roles on breach."),
+                f"• __**Status**__\n`{'ENABLED' if new else 'DISABLED'}`\n\n"
+                f"• __**Effect**__\n"
+                + ("Admins exceeding action limits will have all roles stripped immediately."
+                   if new else "Offending admins keep their roles on threshold breach."),
             ),
             ephemeral=True,
         )
@@ -588,7 +579,6 @@ class LogChannelBtn(_CfgButton):
         super().__init__(
             author_id,
             label="Log Channel",
-            emoji="📋",
             style=discord.ButtonStyle.primary,
         )
 
@@ -596,13 +586,15 @@ class LogChannelBtn(_CfgButton):
         if not await self._guard(interaction):
             return
         e = discord.Embed(
-            title="📋  SET LOG CHANNEL",
+            title="Set Log Channel",
             description=(
-                f"> Guardian security events will be streamed to this channel in real-time.\n"
-                f"> Select a **text channel** from the dropdown below.\n"
-                f"`{SEP}`"
+                "• __**Action**__\n"
+                "Select a text channel to receive Guardian security events.\n\n"
+                "• __**Effect**__\n"
+                "All moderation actions will be logged in real-time."
             ),
-            color=COL_TEAL,
+            color=COL,
+            timestamp=datetime.now(timezone.utc),
         )
         e.set_footer(text=FOOTER)
         await interaction.response.send_message(
@@ -617,9 +609,9 @@ class LogChannelBtn(_CfgButton):
 # ══════════════════════════════════════════════════════════════════════════════
 
 _PAGE_BUTTONS = [
-    lambda gid, aid: [ScanInvitesBtn(gid, aid),   AntiSpamBtn(gid, aid),     ActionLimitsBtn(gid, aid)],
-    lambda gid, aid: [WhitelistLinkBtn(gid, aid),  WhitelistUsersBtn(gid, aid), RevokeAccessBtn(gid, aid)],
-    lambda gid, aid: [AutoRestoreBtn(gid, aid),    ClearRolesBtn(gid, aid),   LogChannelBtn(gid, aid)],
+    lambda gid, aid: [ScanInvitesBtn(gid, aid), AntiSpamBtn(gid, aid),      ActionLimitsBtn(gid, aid)],
+    lambda gid, aid: [WhitelistLinkBtn(gid, aid), WhitelistUsersBtn(gid, aid), RevokeAccessBtn(gid, aid)],
+    lambda gid, aid: [AutoRestoreBtn(gid, aid),   ClearRolesBtn(gid, aid),   LogChannelBtn(gid, aid)],
 ]
 
 
@@ -631,8 +623,6 @@ class SetupView(discord.ui.View):
         self.page      = 0
         self.message: discord.Message | None = None
         self._rebuild()
-
-    # ── Internal ──────────────────────────────────────────────────────────────
 
     def _rebuild(self):
         self.clear_items()
@@ -651,7 +641,7 @@ class SetupView(discord.ui.View):
 
         label = discord.ui.Button(
             label=f"{self.page + 1} / {TOTAL_PAGES}",
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.secondary,
             disabled=True,
             row=1,
         )
@@ -667,8 +657,6 @@ class SetupView(discord.ui.View):
         self.add_item(back)
         self.add_item(label)
         self.add_item(nxt)
-
-    # ── Nav callbacks ─────────────────────────────────────────────────────────
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
@@ -718,12 +706,14 @@ class SetupCog(commands.Cog, name="Setup"):
         if not db.is_whitelisted(ctx.author.id):
             await ctx.send(
                 embed=discord.Embed(
-                    title="🛑  ACCESS DENIED",
+                    title="Access Denied",
                     description=(
-                        "> You are **not authorized** to run the setup wizard.\n"
-                        "> Contact the server owner to be whitelisted."
+                        "• __**Reason**__\n"
+                        "You are not authorized to run the setup wizard.\n\n"
+                        "• __**Resolution**__\n"
+                        "Contact the server owner to be whitelisted."
                     ),
-                    color=COL_CRIMSON,
+                    color=COL,
                 ),
                 delete_after=6,
             )
@@ -732,8 +722,8 @@ class SetupCog(commands.Cog, name="Setup"):
         if ctx.guild is None:
             await ctx.send(
                 embed=discord.Embed(
-                    description="> `+setup` must be used inside a server.",
-                    color=COL_CRIMSON,
+                    description="`+setup` must be used inside a server.",
+                    color=COL,
                 ),
                 delete_after=5,
             )
