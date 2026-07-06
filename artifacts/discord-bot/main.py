@@ -26,6 +26,7 @@ COGS = [
     "cogs.admin",
     "cogs.help",
     "cogs.setup",
+    "cogs.voice",
 ]
 
 

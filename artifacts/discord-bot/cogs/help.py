@@ -341,18 +341,27 @@ class Help(commands.Cog):
     @commands.command(name="support")
     async def support(self, ctx: commands.Context):
         e = discord.Embed(
-            title="Trossard ♱  —  Support",
             description=(
-                "• __**Need Help?**__\n"
-                "Reach the development team through the official support server.\n\n"
-                "• __**Before Contacting**__\n"
-                "Run `+botinfo` and `+scaninvites` first to gather context.\n"
-                "Attach screenshots of any embeds or error messages."
+                "• __**Support & Socials**__\n"
+                "If you need help or want to contact the developers, join our official server "
+                "or reach out on Instagram."
             ),
-            color=COL_HOME,
+            color=discord.Color(0x2B2D31),
         )
         e.set_footer(text=FOOTER)
-        await ctx.send(embed=e)
+
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(
+            label="Discord Server",
+            url="https://discord.gg/hyRyjByyDn",
+            style=discord.ButtonStyle.link,
+        ))
+        view.add_item(discord.ui.Button(
+            label="Instagram",
+            url="https://www.instagram.com/_svvalah_?igsh=MXB2cDVncW9ycjhiMw==",
+            style=discord.ButtonStyle.link,
+        ))
+        await ctx.send(embed=e, view=view)
 
     @checkalt.error
     async def _checkalt_error(self, ctx, error):
