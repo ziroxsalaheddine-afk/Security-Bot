@@ -100,11 +100,12 @@ def _now_playing_embed(
     ap_state = "🟢 On" if player.autoplay == wavelink.AutoPlayMode.enabled else "🔴 Off"
     loop_str = _loop_label(player.queue.mode)
 
-    # Title hyperlinked to URI if available
-    title = f"[{track.title}]({track.uri})" if track.uri else track.title
-
     e = (
-        discord.Embed(title=title, color=COL_MAIN)
+        discord.Embed(
+            title=track.title,
+            url=track.uri if track.uri else discord.utils.MISSING,
+            color=COL_MAIN,
+        )
         .set_author(name="🎶 Now Playing")
         .set_footer(text=FOOTER)
     )
