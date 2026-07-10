@@ -39,8 +39,6 @@ FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
     ("https://lavalink.jirayu.net:443", "youshallnotpass"),
     # AneFaiz / Millohost
     ("https://lava-v4.millohost.my.id:443", "https://discord.gg/mjS5J2K3ep"),
-    # TriniumHost
-    ("https://lavalink-v4.triniumhost.com:443", "free"),
 ]
 
 COGS = [
