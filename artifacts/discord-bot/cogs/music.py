@@ -394,6 +394,7 @@ class Music(commands.Cog):
     # ── +play ─────────────────────────────────────────────────────────────────
 
     @commands.command(name="play")
+    @commands.cooldown(1, 4, commands.BucketType.user)
     async def play(self, ctx: commands.Context, *, query: str):
         """Search by name or URL and queue a track / playlist."""
         if not _has_music_perm(ctx.author, ctx.guild):

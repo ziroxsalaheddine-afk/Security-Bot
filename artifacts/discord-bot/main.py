@@ -167,13 +167,19 @@ class Guardian(commands.Bot):
                 pass
             return
         if isinstance(error, commands.CommandOnCooldown):
+            # Single source of truth for the cooldown embed — every heavy
+            # command's @commands.cooldown(...) funnels here instead of each
+            # cog rolling its own message.
+            seconds = max(1, round(error.retry_after))
             await ctx.send(
                 embed=discord.Embed(
-                    description=f"⏳ On cooldown — try again in `{error.retry_after:.1f}s`.",
-                    color=0xC0392B,
+                    title="Cooldown Notice",
+                    description=f"Patience please... just **{seconds}** seconds left, hhhhh",
+                    color=0x8E7CC3,
                 ),
-                delete_after=5,
+                delete_after=min(seconds, 10),
             )
+            return
         elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(
                 embed=discord.Embed(

@@ -430,6 +430,7 @@ class Backup(commands.Cog):
     # ── +backup ────────────────────────────────────────────────────────────────
 
     @commands.command(name="backup")
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def backup(self, ctx: commands.Context):
         if not _has_elevated(ctx):
             return
@@ -455,9 +456,15 @@ class Backup(commands.Cog):
             ))
             return
 
-        # Persist to disk
+        # Persist to disk — offloaded to a worker thread so serializing/
+        # writing a large snapshot never blocks the event loop (other
+        # commands, heartbeats, and gateway events keep flowing meanwhile).
         path = _backup_path(ctx.guild.id)
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        await asyncio.to_thread(
+            path.write_text,
+            json.dumps(data, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         size_kb = round(path.stat().st_size / 1024, 1)
         log.info("Backup saved for guild %s → %s (%.1f KB)", ctx.guild.id, path, size_kb)
@@ -480,6 +487,7 @@ class Backup(commands.Cog):
     # ── +restore ───────────────────────────────────────────────────────────────
 
     @commands.command(name="restore")
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def restore(self, ctx: commands.Context, guild_id: Optional[int] = None):
         if not _has_elevated(ctx):
             return
@@ -495,7 +503,8 @@ class Backup(commands.Cog):
             return
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            data = json.loads(raw)
         except Exception as exc:
             await ctx.send(embed=_embed(
                 f"• __**Error**__\nCorrupted backup file: `{exc}`",
@@ -539,6 +548,7 @@ class Backup(commands.Cog):
     # ── +cloneroles ────────────────────────────────────────────────────────────
 
     @commands.command(name="cloneroles")
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def cloneroles(self, ctx: commands.Context, source_guild_id: int):
         """Copy roles from a backed-up server into the current server, preserving hierarchy."""
         if not _has_elevated(ctx):
@@ -552,7 +562,8 @@ class Backup(commands.Cog):
             ), delete_after=10)
 
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            data = json.loads(raw)
         except Exception as exc:
             return await ctx.send(embed=_embed(
                 f"• __**Error**__\nCorrupted backup file: `{exc}`", error=True

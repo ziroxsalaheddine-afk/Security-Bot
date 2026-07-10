@@ -29,6 +29,7 @@ class Clone(commands.Cog):
 
     @commands.command(name="loadrole", aliases=["clonerole"])
     @whitelist_only()
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def load_role(self, ctx: commands.Context, *, role: discord.Role):
         t0 = time.perf_counter()
 
@@ -90,6 +91,7 @@ class Clone(commands.Cog):
     # ── +loadchannel / +clonechannel ──────────────────────────────────────────
 
     @commands.command(name="loadchannel", aliases=["clonechannel"])
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     @whitelist_only()
     async def load_channel(self, ctx: commands.Context, *, channel: discord.abc.GuildChannel):
         t0 = time.perf_counter()

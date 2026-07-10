@@ -146,6 +146,7 @@ class Admin(commands.Cog):
     # ── Scan invites ───────────────────────────────────────────────────────────
 
     @commands.command(name="scaninvites")
+    @commands.cooldown(1, 5, commands.BucketType.guild)
     async def scaninvites(self, ctx: commands.Context):
         if not db.is_whitelisted(ctx.author.id):
             return
