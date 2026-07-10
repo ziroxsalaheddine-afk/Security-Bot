@@ -16,6 +16,7 @@ import discord
 from discord.ext import commands
 
 from utils import db, embeds
+from utils.bypass_db import is_bypassed
 
 log = logging.getLogger("guardian.antinuke")
 
@@ -155,6 +156,10 @@ class AntiNuke(commands.Cog):
         if db.is_whitelisted(user.id):
             if entry.action in RATE_LIMIT_ACTIONS:
                 await self._check_rogue_admin(guild, user, cfg)
+            return
+
+        # ── Bypass users: Warden cog monitors and enforces threshold ──────────
+        if is_bypassed(user.id):
             return
 
         # ── Non-whitelisted: punish + restore ─────────────────────────────────

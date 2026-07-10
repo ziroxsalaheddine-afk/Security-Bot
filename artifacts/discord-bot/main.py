@@ -30,6 +30,7 @@ COGS = [
     "cogs.voice",
     "cogs.owner",
     "cogs.backup",
+    "cogs.warden",
 ]
 
 

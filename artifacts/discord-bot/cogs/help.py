@@ -58,6 +58,9 @@ CATEGORIES: dict[str, dict] = {
             ("+whitelist add <@user>",     "Grants a user full bypass of all security systems."),
             ("+whitelist remove <@user>",  "Revokes a user's whitelist access immediately."),
             ("+whitelist list",            "Lists every currently whitelisted user."),
+            ("+bypass add <@user|id>",     "Grants partial immunity — monitored against the abuse threshold."),
+            ("+bypass remove <@user|id>",  "Revokes a user's bypass status, restoring full enforcement."),
+            ("+bypass list",               "Lists every user with active bypass status."),
         ],
     },
     "Recovery": {
