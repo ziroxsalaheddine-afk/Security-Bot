@@ -23,6 +23,26 @@ intents.moderation     = True
 intents.guilds         = True
 intents.voice_states   = True      # Required for all voice/music operations
 
+# Public Lavalink v4 (SSL) fallback nodes: (uri, password). Sourced from the
+# community-maintained list at https://lavalink.darrennathanael.com/SSL —
+# these are free, volunteer-hosted nodes, so they occasionally go down or
+# rotate credentials. If music stops working and the logs show ALL nodes
+# failing to connect, open that page, grab fresh Host/Port/Password values,
+# and replace the entries below (keep the "https://host:port" format).
+# wavelink.Pool connects to every node in this list and load-balances across
+# whichever ones are actually reachable, so one dead node no longer takes
+# music offline entirely.
+FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
+    # Amane & AjieDev
+    ("https://lavalinkv4.serenetia.com:443", "https://seretia.link/discord"),
+    # Jirayu
+    ("https://lavalink.jirayu.net:443", "youshallnotpass"),
+    # AneFaiz / Millohost
+    ("https://lava-v4.millohost.my.id:443", "https://discord.gg/mjS5J2K3ep"),
+    # TriniumHost
+    ("https://lavalink-v4.triniumhost.com:443", "free"),
+]
+
 COGS = [
     "cogs.antinuke",
     "cogs.clone",
@@ -66,23 +86,46 @@ class Guardian(commands.Bot):
             except Exception as e:
                 log.error("Failed to load cog %s: %s", cog, e)
 
-        # ── Connect Lavalink v4 node (wavelink 3.x) ───────────────────────────
+        # ── Connect Lavalink v4 node(s) (wavelink 3.x) ────────────────────────
+        # A single public node going down (e.g. lavalinkv4.serenetia.com
+        # timing out) used to take music offline entirely. We now connect to
+        # a *pool* of nodes — wavelink.Pool automatically routes new players
+        # to whichever node is healthy, so one dead node no longer breaks
+        # +play for everyone. LAVALINK_URI/LAVALINK_PASSWORD (env) is always
+        # tried first if set, so self-hosted/private nodes still take
+        # priority; the public fallbacks below only fill in the gaps.
         lava_uri  = os.environ.get("LAVALINK_URI")
         lava_pass = os.environ.get("LAVALINK_PASSWORD")
+
+        nodes: list[wavelink.Node] = []
         if lava_uri and lava_pass:
+            nodes.append(wavelink.Node(
+                identifier="MAIN",
+                uri=lava_uri,
+                password=lava_pass,
+            ))
+
+        # Public Lavalink v4 nodes (free, community-hosted — see
+        # https://lavalink-list.darrennathanael.com for a maintained list).
+        # These rotate/die periodically; if music stops working, swap in
+        # fresh hosts from that list. Each entry needs a `https://` or
+        # `http://` scheme, a port, and its own password.
+        for i, (uri, password) in enumerate(FALLBACK_LAVALINK_NODES, start=1):
+            nodes.append(wavelink.Node(
+                identifier=f"FALLBACK-{i}",
+                uri=uri,
+                password=password,
+            ))
+
+        if nodes:
             try:
-                nodes = [wavelink.Node(
-                    identifier="MAIN",
-                    uri=lava_uri,
-                    password=lava_pass,
-                )]
                 await wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100)
-                log.info("Lavalink node connecting to %s…", lava_uri)
+                log.info("Connecting to %d Lavalink node(s)…", len(nodes))
             except Exception as exc:
-                log.error("Failed to initialise Lavalink node: %s", exc)
+                log.error("Failed to initialise Lavalink pool: %s", exc)
         else:
             log.warning(
-                "LAVALINK_URI or LAVALINK_PASSWORD not set — music commands disabled."
+                "No Lavalink nodes configured — music commands disabled."
             )
 
     async def on_ready(self):

@@ -64,6 +64,8 @@ CATEGORIES: dict[str, dict] = {
             ("+setprefix <prefix>",        "Changes the bot's command prefix (Owner only). Persists across restarts."),
             ("+setlog <#channel>",         "Sets the channel where all moderation/security events are logged."),
             ("+setlog",                    "Run with no channel to disable logging."),
+            ("+autoreact on/off",          "Toggles the ✅ auto-reaction on add/remove/list commands, bot-wide."),
+            ("+autoreact",                 "Run with no argument to check whether auto-react is currently on or off."),
         ],
     },
     "Aliases": {
