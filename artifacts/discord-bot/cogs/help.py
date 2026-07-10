@@ -64,8 +64,11 @@ CATEGORIES: dict[str, dict] = {
             ("+setprefix <prefix>",        "Changes the bot's command prefix (Owner only). Persists across restarts."),
             ("+setlog <#channel>",         "Sets the channel where all moderation/security events are logged."),
             ("+setlog",                    "Run with no channel to disable logging."),
-            ("+autoreact on/off",          "Toggles the ✅ auto-reaction on add/remove/list commands, bot-wide."),
+            ("+autoreact on/off",          "Toggles auto-react globally (command confirmations + per-user reactions)."),
             ("+autoreact",                 "Run with no argument to check whether auto-react is currently on or off."),
+            ("+autoreact add @user :emoji:", "Binds an emoji so the bot auto-reacts to every message that user sends."),
+            ("+autoreact remove @user",    "Removes a user's auto-react binding."),
+            ("+autoreact list",            "Shows global status and every user with an assigned auto-react emoji."),
         ],
     },
     "Aliases": {

@@ -49,7 +49,8 @@
       "enabled": true,
       "minAccountAge": 7,
       "action": "kick"
-    }
+    },
+    "autoreact": true
   },
   "logs": {
     "channelId": 1496697545190015029
