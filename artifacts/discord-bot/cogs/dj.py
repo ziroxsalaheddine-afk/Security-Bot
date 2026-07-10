@@ -12,7 +12,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from utils import db, dj_db
+from utils import db, dj_db, logs
 
 log = logging.getLogger("guardian.dj")
 
@@ -59,6 +59,11 @@ class DJ(commands.Cog):
             f"{user.mention} (`{user.id}`) has been added to the DJ whitelist.\n\n"
             "They can now use all music commands and interact with music embed buttons."
         ))
+        await logs.send(
+            self.bot, ctx.guild, "✅  DJ Whitelist — User Added",
+            f"• __**User**__\n{user.mention}\n\n• __**Added By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_SUCCESS,
+        )
 
     # ── +dj remove ─────────────────────────────────────────────────────────────
 
@@ -78,6 +83,11 @@ class DJ(commands.Cog):
             f"{user.mention} (`{user.id}`) has been removed from the DJ whitelist.\n"
             "They can no longer use music commands or interact with music buttons."
         ))
+        await logs.send(
+            self.bot, ctx.guild, "🚫  DJ Whitelist — User Removed",
+            f"• __**User**__\n{user.mention}\n\n• __**Removed By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_DANGER,
+        )
 
     # ── +dj list ───────────────────────────────────────────────────────────────
 

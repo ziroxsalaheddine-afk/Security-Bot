@@ -12,7 +12,8 @@ from urllib.parse import urlparse
 import discord
 from discord.ext import commands
 
-from utils import db, embeds, coowners
+from utils import db, embeds, coowners, logs
+from cogs.warden import send_warn_dm
 
 log = logging.getLogger("guardian.automod")
 
@@ -21,10 +22,13 @@ URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Strict Discord invite pattern (catches all common variants)
+# Strict Discord invite pattern — catches every common variant:
+# discord.gg/xxx, discord.com/invite/xxx, discordapp.com/invite/xxx.
+# Deliberately scoped to `/invite/` paths on discord.com/discordapp.com so
+# unrelated discordapp.com links (CDN, API, etc.) are never false-flagged.
 DISCORD_INVITE_RE = re.compile(
     r"(?:https?://)?(?:www\.)?"
-    r"(?:discord\.gg|dsc\.gg|discord\.com/invite|discordapp\.com/invite)"
+    r"(?:discord\.gg|dsc\.gg|discord(?:app)?\.com/invite)"
     r"/\S+",
     re.IGNORECASE,
 )
@@ -55,6 +59,7 @@ class AutoMod(commands.Cog):
         # ── Strict Discord invite filter ──────────────────────────────────────
         # Checked before the whitelist so the bypass logic is self-contained.
         if DISCORD_INVITE_RE.search(message.content) and not _has_invite_bypass(message):
+            content_preview = message.content
             try:
                 await message.delete()
             except Exception:
@@ -66,6 +71,20 @@ class AutoMod(commands.Cog):
                 )
             except Exception:
                 pass
+
+            reason = "Invite Link detected"
+            await send_warn_dm(message.author, message.guild, reason)
+            await logs.send(
+                self.bot,
+                message.guild,
+                "🔗  Invite Link Blocked",
+                f"• __**User**__\n{message.author.mention}\n\n"
+                f"• __**Reason**__\n{reason}\n\n"
+                f"• __**Message Content**__\n{discord.utils.escape_markdown(content_preview)[:1000]}",
+                user=message.author,
+                color=logs.COL_DANGER,
+            )
+
             log.info(
                 "Discord invite blocked from %s in %s",
                 message.author,

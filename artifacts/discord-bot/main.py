@@ -39,6 +39,7 @@ COGS = [
     "cogs.dj",
     "cogs.alias",
     "cogs.reactions",
+    "cogs.eventlog",
 ]
 
 
@@ -115,7 +116,10 @@ class Guardian(commands.Bot):
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
             return
-        if isinstance(error, gatekeeper.NotAuthorized):
+        # Any check failure (gatekeeper denial, guild_only, missing perms from
+        # another decorator, etc.) surfaces the same "You Cannot Use This Bot!"
+        # embed — the bot must never go silent when a user lacks permission.
+        if isinstance(error, commands.CheckFailure):
             try:
                 await ctx.send(embed=gatekeeper.denial_embed(self))
             except discord.Forbidden:

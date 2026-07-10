@@ -62,6 +62,8 @@ CATEGORIES: dict[str, dict] = {
             ("+bypass remove <@user|id>",  "Revokes a user's bypass status, restoring full enforcement."),
             ("+bypass list",               "Lists every user with active bypass status."),
             ("+setprefix <prefix>",        "Changes the bot's command prefix (Owner only). Persists across restarts."),
+            ("+setlog <#channel>",         "Sets the channel where all moderation/security events are logged."),
+            ("+setlog",                    "Run with no channel to disable logging."),
         ],
     },
     "Aliases": {

@@ -409,10 +409,18 @@ class Music(commands.Cog):
                     # Direct URL — let wavelink detect the source
                     results = await wavelink.Playable.search(query)
                 else:
-                    # Text search — default to YouTube Music
+                    # Text search: exact-name lookup, no URL required.
+                    # YouTube Music's catalogue skips many low-view / niche
+                    # uploads, so fall back to plain YouTube search (which
+                    # indexes virtually everything, down to 1-view videos)
+                    # whenever the Music catalogue comes up empty.
                     results = await wavelink.Playable.search(
                         query, source=wavelink.TrackSource.YouTubeMusic
                     )
+                    if not results:
+                        results = await wavelink.Playable.search(
+                            query, source=wavelink.TrackSource.YouTube
+                        )
             except Exception as exc:
                 return await ctx.send(embed=_err_embed(
                     f"• __**Search Error**__\n`{exc}`"

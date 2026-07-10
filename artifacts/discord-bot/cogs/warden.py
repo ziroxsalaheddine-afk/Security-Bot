@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 import discord
 from discord.ext import commands
 
-from utils import db
+from utils import db, logs
 from utils.bypass_db import is_bypassed, add_bypass, remove_bypass, get_bypass_list
 
 log = logging.getLogger("guardian.warden")
@@ -164,6 +164,11 @@ class Warden(commands.Cog):
         )
         await send_warn_dm(user, guild, reason)
         await notify_owners(self.bot, user, guild, reason)
+        await logs.send(
+            self.bot, guild, "⚠️  User Warned / Jailed",
+            f"• __**User**__\n{user.mention}\n\n• __**Reason**__\n{reason}",
+            user=user, color=logs.COL_WARN,
+        )
 
     # ── Bypass abuse handler ───────────────────────────────────────────────────
 
@@ -233,6 +238,11 @@ class Warden(commands.Cog):
         )
         await send_warn_dm(user, guild, reason)
         await notify_owners(self.bot, user, guild, reason)
+        await logs.send(
+            self.bot, guild, "⚠️  Bypass Abused — User Warned",
+            f"• __**User**__\n{user.mention}\n\n• __**Reason**__\n{reason}",
+            user=user, color=logs.COL_WARN,
+        )
 
     # ── +bypass command group ──────────────────────────────────────────────────
 
@@ -269,6 +279,11 @@ class Warden(commands.Cog):
             )
 
         add_bypass(user.id)
+        await logs.send(
+            self.bot, ctx.guild, "✅  Bypass Granted",
+            f"• __**User**__\n{user.mention}\n\n• __**Granted By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_SUCCESS,
+        )
         await ctx.send(embed=_embed(
             "Bypass Granted",
             f"• __**User**__\n{user.mention}  (`{user.id}`)\n\n"
@@ -288,6 +303,11 @@ class Warden(commands.Cog):
             return
 
         remove_bypass(user.id)
+        await logs.send(
+            self.bot, ctx.guild, "🚫  Bypass Revoked",
+            f"• __**User**__\n{user.mention}\n\n• __**Revoked By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_DANGER,
+        )
         await ctx.send(embed=_embed(
             "Bypass Revoked",
             f"• __**User**__\n{user.mention}  (`{user.id}`)\n\n"

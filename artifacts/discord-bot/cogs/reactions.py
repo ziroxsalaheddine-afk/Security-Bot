@@ -1,39 +1,18 @@
 """
 Auto-Reaction Cog.
 
-Adds a ✅ reaction to the invoking message whenever a user successfully
-completes an add/remove/list-style management command for users, roles, or
-aliases — a lightweight visual confirmation the action actually went through.
+Adds a ✅ reaction to the invoking message whenever a user successfully runs
+a command whose name contains "add", "remove", or "list" — a lightweight
+visual confirmation the action went through.
 
-`on_command_completion` only fires once a command has run to completion
-*without* raising — but a command can still "complete" after replying with
-its own in-body denial (e.g. `+owner add` replying "Access Denied" and
-returning). Those commands are excluded below via `NO_REACT_QUALNAMES` so a
-✅ is never shown next to a failed/denied attempt.
+`on_command_completion` fires once a command has finished running without
+raising, which is what we key off here.
 """
 
 from discord.ext import commands
 
 CONFIRM_EMOJI = "✅"
-
-# Exact qualified command names that represent a genuine add/remove/list
-# mutation on users, roles, or aliases. Deliberately explicit (rather than
-# matching on subcommand name alone) so bare group invocations like
-# `+alias`, `+alias self`, or `+bypass` (which just show usage text, not a
-# mutation) never get a reaction.
-REACT_QUALNAMES = {
-    "whitelist add", "whitelist remove", "whitelist list",
-    "bypass add", "bypass remove", "bypass list",
-    "dj add", "dj remove", "dj list",
-    "alias add", "alias remove", "alias list",
-    "alias self add", "alias self remove", "alias self list",
-    "coowners",
-}
-
-# Commands whose *body* can still perform an in-line access-denial reply
-# ("Access Denied") and return normally rather than raising — a completion
-# there is not a genuine success, so never react to these.
-NO_REACT_QUALNAMES = {"owner add", "owner remove"}
+_KEYWORDS = ("add", "remove", "list")
 
 
 class Reactions(commands.Cog):
@@ -44,9 +23,9 @@ class Reactions(commands.Cog):
     async def on_command_completion(self, ctx: commands.Context):
         if ctx.command is None:
             return
-        qualname = ctx.command.qualified_name
 
-        if qualname in NO_REACT_QUALNAMES or qualname not in REACT_QUALNAMES:
+        qualname = ctx.command.qualified_name.lower()
+        if not any(keyword in qualname for keyword in _KEYWORDS):
             return
 
         try:

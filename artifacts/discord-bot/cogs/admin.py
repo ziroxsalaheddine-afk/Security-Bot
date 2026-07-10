@@ -10,7 +10,7 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from utils import db
+from utils import db, logs
 
 log = logging.getLogger("guardian.admin")
 
@@ -50,6 +50,11 @@ class Admin(commands.Cog):
             "Whitelist Updated",
             f"• __**User Added**__\n{user.mention} has been whitelisted."
         ))
+        await logs.send(
+            self.bot, ctx.guild, "✅  Whitelist — User Added",
+            f"• __**User**__\n{user.mention}\n\n• __**Added By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_SUCCESS,
+        )
 
     @whitelist.command(name="remove")
     async def wl_remove(self, ctx: commands.Context, user: discord.User):
@@ -60,6 +65,11 @@ class Admin(commands.Cog):
             "Whitelist Updated",
             f"• __**User Removed**__\n{user.mention} has been removed from the whitelist."
         ))
+        await logs.send(
+            self.bot, ctx.guild, "🚫  Whitelist — User Removed",
+            f"• __**User**__\n{user.mention}\n\n• __**Removed By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_DANGER,
+        )
 
     @whitelist.command(name="list")
     async def wl_list(self, ctx: commands.Context):
@@ -82,22 +92,31 @@ class Admin(commands.Cog):
     @owner.command(name="add")
     async def owner_add(self, ctx: commands.Context, user: discord.User):
         if not db.is_owner(ctx.author.id):
-            return await ctx.send(
-                embed=_embed("Access Denied", "Only owners can add other owners."),
-                delete_after=5,
-            )
+            # Raise instead of sending our own message + returning: a plain
+            # `return` makes the command "complete" successfully as far as
+            # on_command_completion is concerned, which would wrongly trigger
+            # the auto-react ✅ on a denied action. Raising CheckFailure lets
+            # the global on_command_error show the one standard denial embed.
+            raise commands.CheckFailure("Only owners can add other owners.")
         db.add_owner(user.id)
         await ctx.send(embed=_embed("Owner Added", f"• __**New Owner**__\n{user.mention} is now an owner."))
+        await logs.send(
+            self.bot, ctx.guild, "✅  Owner Added",
+            f"• __**User**__\n{user.mention}\n\n• __**Added By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_SUCCESS,
+        )
 
     @owner.command(name="remove")
     async def owner_remove(self, ctx: commands.Context, user: discord.User):
         if not db.is_owner(ctx.author.id):
-            return await ctx.send(
-                embed=_embed("Access Denied", "Only owners can remove owners."),
-                delete_after=5,
-            )
+            raise commands.CheckFailure("Only owners can remove owners.")
         db.remove_owner(user.id)
         await ctx.send(embed=_embed("Owner Removed", f"• __**Removed**__\n{user.mention} is no longer an owner."))
+        await logs.send(
+            self.bot, ctx.guild, "🚫  Owner Removed",
+            f"• __**User**__\n{user.mention}\n\n• __**Removed By**__\n{ctx.author.mention}",
+            user=user, color=logs.COL_DANGER,
+        )
 
     @owner.command(name="list")
     async def owner_list(self, ctx: commands.Context):
