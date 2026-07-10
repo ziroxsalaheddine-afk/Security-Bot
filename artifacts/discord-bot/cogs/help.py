@@ -72,7 +72,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Aliases": {
-        "emoji": "<:vrs_security:1496957017858773133>",
+        "emoji": "<:vrs_ghost:1496962700868063504>",
         "tagline": "Create shortcuts for any command — server-wide or personal.",
         "commands": [
             ("+alias add <alias> <cmd>",        "Creates a server-wide alias (max 3 per target command, 30s cooldown)."),
@@ -84,7 +84,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Music": {
-        "emoji": "<a:vrs_working:1498377074434506762>",
+        "emoji": "<a:2m_music:1458242634513645732>",
         "tagline": "Lavalink v4 — YouTube search, playlists, interactive Now Playing buttons.",
         "commands": [
             ("+play <name|URL>",   "Search by song name or paste a URL to queue a track/playlist. Joins your VC automatically."),
@@ -98,7 +98,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "DJ Whitelist": {
-        "emoji": "<:vrs_security:1496957017858773133>",
+        "emoji": "<a:11pm_music1:1040446718816296990>",
         "tagline": "Control who can use music commands and interact with music embed buttons.",
         "commands": [
             ("+dj add <@user|id>",    "Adds a user to the DJ whitelist, granting access to all music commands and buttons. (Owner only)"),
@@ -107,7 +107,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Recovery": {
-        "emoji": "<a:vrs_blackstar:1483194986622091505>",
+        "emoji": "<a:Warning:1497198535769194668>",
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
             ("+loadrole <@role>",           "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
@@ -120,7 +120,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Information": {
-        "emoji": "<a:vrs_blackstar:1483194986622091505>",
+        "emoji": "<a:gh1y1nee:1458439134766039165>",
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
             ("+scaninvites",       "Scans all active invites and flags dangerous ones (unlimited uses, no expiry, etc.)."),
