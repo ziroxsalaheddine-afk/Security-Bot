@@ -536,6 +536,96 @@ class Backup(commands.Cog):
 
         await warning.delete()
 
+    # ── +cloneroles ────────────────────────────────────────────────────────────
+
+    @commands.command(name="cloneroles")
+    async def cloneroles(self, ctx: commands.Context, source_guild_id: int):
+        """Copy roles from a backed-up server into the current server, preserving hierarchy."""
+        if not _has_elevated(ctx):
+            return
+
+        path = _backup_path(source_guild_id)
+        if not path.exists():
+            return await ctx.send(embed=_embed(
+                f"• __**Error**__\nNo backup found for guild `{source_guild_id}`.\n"
+                "Run `+backup` in that server first to save its data here."
+            ), delete_after=10)
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return await ctx.send(embed=_embed(
+                f"• __**Error**__\nCorrupted backup file: `{exc}`", error=True
+            ), delete_after=10)
+
+        roles = [r for r in data.get("roles", []) if not r.get("is_default")]
+        if not roles:
+            return await ctx.send(embed=_embed(
+                "• __**Error**__\nNo roles found in that backup."
+            ), delete_after=8)
+
+        # Sort ascending by original position (position 0 = bottom of list)
+        roles_sorted = sorted(roles, key=lambda r: r["position"])
+        src_name = data.get("meta", {}).get("guild_name", str(source_guild_id))
+
+        progress_msg = await ctx.send(embed=_embed(
+            f"• __**Role Clone Initializing**__\n"
+            f"Source: **{src_name}** (`{source_guild_id}`)\n"
+            f"Cloning `{len(roles_sorted)}` roles → **{ctx.guild.name}**\n\n"
+            f"*Creating in exact hierarchical order — please wait…*"
+        ))
+
+        created: list[discord.Role] = []
+        failed = 0
+
+        for role_data in roles_sorted:
+            try:
+                new_role = await ctx.guild.create_role(
+                    name=role_data["name"],
+                    color=discord.Color(role_data["color"]),
+                    hoist=role_data["hoist"],
+                    mentionable=role_data["mentionable"],
+                    permissions=discord.Permissions(role_data["permissions"]),
+                    reason=f"[Guardian] Role clone from {src_name} ({source_guild_id})",
+                )
+                created.append(new_role)
+                await asyncio.sleep(WRITE_SLEEP)
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.warning("Could not create role '%s': %s", role_data["name"], exc)
+                failed += 1
+
+        # Apply positions: index 0 (bottom) → position 1, ascending
+        if created:
+            try:
+                positions = {role: idx + 1 for idx, role in enumerate(created)}
+                await ctx.guild.edit_role_positions(
+                    positions=positions,
+                    reason=f"[Guardian] Role clone hierarchy from {source_guild_id}",
+                )
+                log.info(
+                    "Role positions set for %d cloned roles in %s",
+                    len(created), ctx.guild,
+                )
+            except Exception as exc:
+                log.warning("Could not set role positions (roles still created): %s", exc)
+
+        await progress_msg.edit(embed=_embed(
+            f"• __**Role Clone Complete**__\n"
+            f"Source: **{src_name}**\n\n"
+            f"• __**Created**__\n`{len(created)}` roles\n\n"
+            f"• __**Failed**__\n`{failed}` roles\n\n"
+            f"• __**Hierarchy**__\nPositions applied — roles ordered bottom→top "
+            f"exactly as in the source server."
+        ))
+
+    @cloneroles.error
+    async def _cloneroles_error(self, ctx: commands.Context, error):
+        if isinstance(error, (commands.BadArgument, commands.MissingRequiredArgument)):
+            await ctx.send(embed=_embed(
+                "• __**Usage**__\n`+cloneroles <source_guild_id>`\n\n"
+                "Run `+backup` in the source server first."
+            ), delete_after=8)
+
     # ── Error handlers ─────────────────────────────────────────────────────────
 
     @restore.error

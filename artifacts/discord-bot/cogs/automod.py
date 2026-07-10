@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import discord
 from discord.ext import commands
 
-from utils import db, embeds
+from utils import db, embeds, coowners
 
 log = logging.getLogger("guardian.automod")
 
@@ -20,6 +20,24 @@ URL_RE = re.compile(
     r"(?:https?://|www\.)\S+|discord\.gg/\S+",
     re.IGNORECASE,
 )
+
+# Strict Discord invite pattern (catches all common variants)
+DISCORD_INVITE_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?"
+    r"(?:discord\.gg|dsc\.gg|discord\.com/invite|discordapp\.com/invite)"
+    r"/\S+",
+    re.IGNORECASE,
+)
+
+
+def _has_invite_bypass(message: discord.Message) -> bool:
+    """Bot Owner, Server Co-Owner, or 'Bypass' role holders are immune."""
+    author = message.author
+    if db.is_owner(author.id):
+        return True
+    if message.guild and coowners.is_coowner(message.guild.id, author.id):
+        return True
+    return any(r.name == "Bypass" for r in getattr(author, "roles", []))
 
 
 class AutoMod(commands.Cog):
@@ -33,6 +51,29 @@ class AutoMod(commands.Cog):
             return
         if message.author.bot:
             return
+
+        # ── Strict Discord invite filter ──────────────────────────────────────
+        # Checked before the whitelist so the bypass logic is self-contained.
+        if DISCORD_INVITE_RE.search(message.content) and not _has_invite_bypass(message):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            try:
+                await message.channel.send(
+                    f"{message.author.mention} ❌  Discord invite links are not allowed here.",
+                    delete_after=5,
+                )
+            except Exception:
+                pass
+            log.info(
+                "Discord invite blocked from %s in %s",
+                message.author,
+                message.guild,
+            )
+            return
+
+        # ── Global whitelist: immune from anti-link and anti-spam ─────────────
         if db.is_whitelisted(message.author.id):
             return
 

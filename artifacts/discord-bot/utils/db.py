@@ -201,3 +201,13 @@ def set_log_channel(channel_id: Optional[int]):
 
 def get_log_channel() -> Optional[int]:
     return get()["logs"].get("channelId")
+
+
+# ── Prefix ────────────────────────────────────────────────────────────────────
+
+def get_prefix() -> str:
+    return get_config().get("prefix", "+")
+
+
+def set_prefix(prefix: str):
+    set_config(["prefix"], prefix)

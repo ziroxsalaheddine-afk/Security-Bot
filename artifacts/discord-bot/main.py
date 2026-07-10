@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import discord
+import wavelink
 from discord.ext import commands
 from utils import db
 from keep_alive import keep_alive
@@ -31,13 +32,18 @@ COGS = [
     "cogs.owner",
     "cogs.backup",
     "cogs.warden",
+    "cogs.music",
 ]
+
+
+def _get_prefix(bot: "Guardian", message: discord.Message) -> str:
+    return db.get_prefix()
 
 
 class Guardian(commands.Bot):
     def __init__(self):
         super().__init__(
-            command_prefix="+",
+            command_prefix=_get_prefix,
             intents=intents,
             help_command=None,
         )
@@ -49,6 +55,25 @@ class Guardian(commands.Bot):
                 log.info("Loaded cog: %s", cog)
             except Exception as e:
                 log.error("Failed to load cog %s: %s", cog, e)
+
+        # ── Connect Lavalink v4 node (wavelink 3.x) ───────────────────────────
+        lava_uri  = os.environ.get("LAVALINK_URI")
+        lava_pass = os.environ.get("LAVALINK_PASSWORD")
+        if lava_uri and lava_pass:
+            try:
+                nodes = [wavelink.Node(
+                    identifier="MAIN",
+                    uri=lava_uri,
+                    password=lava_pass,
+                )]
+                await wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100)
+                log.info("Lavalink node connecting to %s…", lava_uri)
+            except Exception as exc:
+                log.error("Failed to initialise Lavalink node: %s", exc)
+        else:
+            log.warning(
+                "LAVALINK_URI or LAVALINK_PASSWORD not set — music commands disabled."
+            )
 
     async def on_ready(self):
         print()

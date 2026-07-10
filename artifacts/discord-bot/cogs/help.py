@@ -55,26 +55,42 @@ CATEGORIES: dict[str, dict] = {
             ("+automod antispam on/off",   "Toggles spam detection — auto-times out message flooders."),
             ("+lockdown",                  "Instantly locks all text channels to stop threats mid-action."),
             ("+unlock",                    "Lifts the lockdown and restores all channel permissions."),
-            ("+whitelist add <@user>",     "Grants a user full bypass of all security systems."),
+            ("+whitelist add <@user>",     "Grants a user full bypass of all security systems (100% immune)."),
             ("+whitelist remove <@user>",  "Revokes a user's whitelist access immediately."),
             ("+whitelist list",            "Lists every currently whitelisted user."),
             ("+bypass add <@user|id>",     "Grants partial immunity — monitored against the abuse threshold."),
             ("+bypass remove <@user|id>",  "Revokes a user's bypass status, restoring full enforcement."),
             ("+bypass list",               "Lists every user with active bypass status."),
+            ("+setprefix <prefix>",        "Changes the bot's command prefix (Owner only). Persists across restarts."),
+        ],
+    },
+    "Music": {
+        "emoji": "<a:vrs_working:1498377074434506762>",
+        "tagline": "Lavalink v4 music — Noir/Dark Techwear aesthetics. Requires the Music role.",
+        "commands": [
+            ("+play <query|URL>",  "Search YouTube/SoundCloud or paste a direct URL to queue a track. Joins your VC automatically."),
+            ("+pause",             "Toggles pause/resume on the current track."),
+            ("+volume <1-100>",    "Sets playback volume. Persists until changed or bot leaves."),
+            ("+autoplay",          "Toggles Lavalink recommended-track continuation after the queue ends."),
+            ("+join",              "Joins your voice channel and stays indefinitely (24/7 mode)."),
+            ("+leave",             "Disconnects the bot from the voice channel."),
         ],
     },
     "Recovery": {
         "emoji": "<a:vrs_blackstar:1483194986622091505>",
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
-            ("+loadrole <@role>",      "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
-            ("+clonerole <@role>",     "Alias for +loadrole — identical functionality, alternate syntax."),
-            ("+loadchannel <#ch>",     "Clones a channel with every setting and all role/member permission overwrites perfectly restored."),
-            ("+clonechannel <#ch>",    "Alias for +loadchannel — identical functionality, alternate syntax."),
+            ("+loadrole <@role>",           "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
+            ("+clonerole <@role>",          "Alias for +loadrole — identical functionality, alternate syntax."),
+            ("+loadchannel <#ch>",          "Clones a channel with every setting and all role/member permission overwrites perfectly restored."),
+            ("+clonechannel <#ch>",         "Alias for +loadchannel — identical functionality, alternate syntax."),
+            ("+backup",                     "Snapshots the entire server — roles, channels, categories, emojis, and member role assignments."),
+            ("+restore [guild_id]",         "Replays a saved snapshot into the current server. Omit guild_id to use this server's own backup."),
+            ("+cloneroles <source_guild_id>", "Copies all roles from another server's backup into this server, sorted by exact hierarchical position."),
         ],
     },
     "Information": {
-        "emoji": "<a:vrs_working:1498377074434506762>",
+        "emoji": "<a:vrs_blackstar:1483194986622091505>",
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
             ("+scaninvites",       "Scans all active invites and flags dangerous ones (unlimited uses, no expiry, etc.)."),
@@ -278,7 +294,12 @@ class Help(commands.Cog):
 
     @commands.command(name="help")
     async def help_cmd(self, ctx: commands.Context):
-        if not db.is_whitelisted(ctx.author.id):
+        if not db.is_owner(ctx.author.id):
+            owner_ids = db.get_owners()
+            owner_id  = owner_ids[0] if owner_ids else 0
+            await ctx.reply(
+                f"owner only <@{owner_id}> <:locksc:1497746903394287626>"
+            )
             return
         view = HelpView(ctx.author.id)
         view.message = await ctx.send(embed=_home_embed(), view=view)

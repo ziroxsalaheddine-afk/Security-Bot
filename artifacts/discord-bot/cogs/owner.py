@@ -221,6 +221,33 @@ class OwnerCog(commands.Cog, name="Owner"):
                 delete_after=8,
             )
 
+    # ── +setprefix (Owner only) ────────────────────────────────────────────────
+
+    @commands.command(name="setprefix")
+    async def setprefix(self, ctx: commands.Context, prefix: str):
+        if not db.is_owner(ctx.author.id):
+            return
+        if len(prefix) > 5:
+            return await ctx.send(
+                embed=_ok("• __**Error**__\nPrefix must be 5 characters or fewer."),
+                delete_after=8,
+            )
+        db.set_prefix(prefix)
+        log.info("Prefix changed to '%s' by %s", prefix, ctx.author)
+        await ctx.send(embed=_ok(
+            f"• __**Prefix Updated**__\nNew prefix: `{prefix}`\n\n"
+            f"• __**Example**__\n`{prefix}help`  ·  `{prefix}play`  ·  `{prefix}antinuke`\n\n"
+            f"*All commands now use this prefix.*"
+        ))
+
+    @setprefix.error
+    async def _setprefix_error(self, ctx: commands.Context, error):
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(
+                embed=_ok("• __**Usage**__\n`+setprefix <new_prefix>`"),
+                delete_after=8,
+            )
+
     # ── Error handlers ─────────────────────────────────────────────────────────
 
     @announce.error
