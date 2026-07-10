@@ -5,6 +5,8 @@ import discord
 import wavelink
 from discord.ext import commands
 from utils import db
+from utils import alias_db
+from utils import gatekeeper
 from keep_alive import keep_alive
 
 logging.basicConfig(
@@ -35,6 +37,8 @@ COGS = [
     "cogs.warden",
     "cogs.music",
     "cogs.dj",
+    "cogs.alias",
+    "cogs.reactions",
 ]
 
 
@@ -51,6 +55,9 @@ class Guardian(commands.Bot):
         )
 
     async def setup_hook(self):
+        alias_db.init()
+        self.add_check(gatekeeper.check_or_raise)
+
         for cog in COGS:
             try:
                 await self.load_extension(cog)
@@ -88,10 +95,41 @@ class Guardian(commands.Bot):
         print(f"  [GUILDS] Serving {len(self.guilds)} guild(s)")
         print()
 
+    async def on_message(self, message: discord.Message):
+        if message.author.bot:
+            return
+
+        # Rewrite `+<alias>` into its target command before dispatch, so
+        # server & personal aliases behave exactly like the real command.
+        resolved = alias_db.resolve(
+            db.get_prefix(),
+            message.content,
+            message.author.id,
+            message.guild.id if message.guild else None,
+        )
+        if resolved is not None:
+            message.content = resolved
+
+        await self.process_commands(message)
+
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
             return
-        if isinstance(error, commands.MissingRequiredArgument):
+        if isinstance(error, gatekeeper.NotAuthorized):
+            try:
+                await ctx.send(embed=gatekeeper.denial_embed(self))
+            except discord.Forbidden:
+                pass
+            return
+        if isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(
+                embed=discord.Embed(
+                    description=f"⏳ On cooldown — try again in `{error.retry_after:.1f}s`.",
+                    color=0xC0392B,
+                ),
+                delete_after=5,
+            )
+        elif isinstance(error, commands.MissingRequiredArgument):
             await ctx.send(
                 embed=discord.Embed(
                     description=f"❌ Missing argument: `{error.param.name}`",

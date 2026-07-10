@@ -64,6 +64,18 @@ CATEGORIES: dict[str, dict] = {
             ("+setprefix <prefix>",        "Changes the bot's command prefix (Owner only). Persists across restarts."),
         ],
     },
+    "Aliases": {
+        "emoji": "<:vrs_security:1496957017858773133>",
+        "tagline": "Create shortcuts for any command — server-wide or personal.",
+        "commands": [
+            ("+alias add <alias> <cmd>",        "Creates a server-wide alias (max 3 per target command, 30s cooldown)."),
+            ("+alias remove <alias>",           "Removes a server alias."),
+            ("+alias list",                     "Lists every alias configured in this server."),
+            ("+alias self add <alias> <cmd>",   "Creates a personal alias that works for you in every server (max 3 per command)."),
+            ("+alias self remove <alias>",      "Removes one of your personal aliases."),
+            ("+alias self list",                "Lists your personal aliases."),
+        ],
+    },
     "Music": {
         "emoji": "<a:vrs_working:1498377074434506762>",
         "tagline": "Lavalink v4 — YouTube search, playlists, interactive Now Playing buttons.",
