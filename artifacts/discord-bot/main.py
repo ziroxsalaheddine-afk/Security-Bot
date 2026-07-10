@@ -4,6 +4,7 @@ import logging
 import discord
 from discord.ext import commands
 from utils import db
+from keep_alive import keep_alive
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,4 +83,5 @@ if __name__ == "__main__":
         log.critical("DISCORD_TOKEN is not set. Exiting.")
         raise SystemExit(1)
     db.get()
+    keep_alive()
     bot.run(token, log_handler=None)
