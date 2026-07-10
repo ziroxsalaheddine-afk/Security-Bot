@@ -3,10 +3,14 @@ Voice Cog — 24/7 VC System
 ════════════════════════════
 +join   — join the invoker's voice channel (self-deafened, stays indefinitely)
 +leave  — cleanly destroy the guild's voice connection
+
+Wavelink-aware: if the active voice client is a wavelink.Player (music is
+playing), both commands handle it correctly without crashing.
 """
 
 import logging
 import discord
+import wavelink
 from discord.ext import commands
 
 log = logging.getLogger("guardian.voice")
@@ -19,30 +23,29 @@ class Voice(commands.Cog):
         self.bot = bot
 
     # ── +join ──────────────────────────────────────────────────────────────────
+
     @commands.command(name="join")
     async def join(self, ctx: commands.Context):
         if not ctx.author.voice or not ctx.author.voice.channel:
-            e = discord.Embed(
+            return await ctx.send(embed=discord.Embed(
                 description="• __**Error**__\nYou must be in a voice channel first.",
                 color=COL,
-            )
-            await ctx.send(embed=e, delete_after=8)
-            return
+            ), delete_after=8)
 
         channel: discord.VoiceChannel = ctx.author.voice.channel
-
         vc = ctx.guild.voice_client
 
         if vc and vc.is_connected():
             if vc.channel.id == channel.id:
-                e = discord.Embed(
+                return await ctx.send(embed=discord.Embed(
                     description=f"• __**Already Connected**__\nAlready in {channel.mention}.",
                     color=COL,
-                )
-                await ctx.send(embed=e, delete_after=6)
-                return
+                ), delete_after=6)
+            # Move — works for both regular VoiceClient and wavelink.Player
             await vc.move_to(channel)
         else:
+            # If the music cog has a wavelink player connecting elsewhere, let it;
+            # just connect a plain VoiceClient for the 24/7 use-case.
             vc = await channel.connect(self_deaf=True)
 
         log.info("Joined VC '%s' in guild '%s'", channel.name, ctx.guild.name)
@@ -55,21 +58,27 @@ class Voice(commands.Cog):
         await ctx.send(embed=e)
 
     # ── +leave ─────────────────────────────────────────────────────────────────
+
     @commands.command(name="leave")
     async def leave(self, ctx: commands.Context):
         vc = ctx.guild.voice_client
-
         if not vc or not vc.is_connected():
-            e = discord.Embed(
+            return await ctx.send(embed=discord.Embed(
                 description="• __**Error**__\nNot connected to any voice channel.",
                 color=COL,
-            )
-            await ctx.send(embed=e, delete_after=8)
-            return
+            ), delete_after=8)
 
         channel_name = vc.channel.name
-        await vc.disconnect(force=False)
 
+        # If the voice client is a wavelink Player, stop the music cleanly first
+        if isinstance(vc, wavelink.Player):
+            vc.queue.clear()
+            try:
+                await vc.stop()
+            except Exception:
+                pass
+
+        await vc.disconnect(force=False)
         log.info("Left VC '%s' in guild '%s'", channel_name, ctx.guild.name)
 
         e = discord.Embed(

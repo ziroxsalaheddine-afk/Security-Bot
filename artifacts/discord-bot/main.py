@@ -15,10 +15,11 @@ logging.basicConfig(
 log = logging.getLogger("guardian")
 
 intents = discord.Intents.default()
-intents.members = True
+intents.members        = True
 intents.message_content = True
-intents.moderation = True
-intents.guilds = True
+intents.moderation     = True
+intents.guilds         = True
+intents.voice_states   = True      # Required for all voice/music operations
 
 COGS = [
     "cogs.antinuke",
@@ -33,6 +34,7 @@ COGS = [
     "cogs.backup",
     "cogs.warden",
     "cogs.music",
+    "cogs.dj",
 ]
 
 

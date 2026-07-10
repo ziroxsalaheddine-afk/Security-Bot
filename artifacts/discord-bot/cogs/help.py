@@ -66,14 +66,25 @@ CATEGORIES: dict[str, dict] = {
     },
     "Music": {
         "emoji": "<a:vrs_working:1498377074434506762>",
-        "tagline": "Lavalink v4 music — Noir/Dark Techwear aesthetics. Requires the Music role.",
+        "tagline": "Lavalink v4 — YouTube search, playlists, interactive Now Playing buttons.",
         "commands": [
-            ("+play <query|URL>",  "Search YouTube/SoundCloud or paste a direct URL to queue a track. Joins your VC automatically."),
+            ("+play <name|URL>",   "Search by song name or paste a URL to queue a track/playlist. Joins your VC automatically."),
             ("+pause",             "Toggles pause/resume on the current track."),
-            ("+volume <1-100>",    "Sets playback volume. Persists until changed or bot leaves."),
-            ("+autoplay",          "Toggles Lavalink recommended-track continuation after the queue ends."),
+            ("+skip",              "Force-skips the current track and plays the next one in the queue."),
+            ("+stop",              "Clears the queue and disconnects the bot from the voice channel."),
+            ("+volume <1-100>",    "Sets playback volume (1–100). Persists until changed or the bot leaves."),
+            ("+autoplay",          "Toggles Lavalink recommended-track continuation after the queue is exhausted."),
             ("+join",              "Joins your voice channel and stays indefinitely (24/7 mode)."),
-            ("+leave",             "Disconnects the bot from the voice channel."),
+            ("+leave",             "Disconnects the bot from the voice channel, stopping music if playing."),
+        ],
+    },
+    "DJ Whitelist": {
+        "emoji": "<:vrs_security:1496957017858773133>",
+        "tagline": "Control who can use music commands and interact with music embed buttons.",
+        "commands": [
+            ("+dj add <@user|id>",    "Adds a user to the DJ whitelist, granting access to all music commands and buttons. (Owner only)"),
+            ("+dj remove <@user|id>", "Removes a user from the DJ whitelist, revoking their music access. (Owner only)"),
+            ("+dj list",              "Displays an embed listing every user currently in the DJ whitelist."),
         ],
     },
     "Recovery": {
