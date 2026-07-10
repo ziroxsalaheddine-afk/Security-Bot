@@ -62,7 +62,7 @@ channel = "stable-25_05"
 
 [userenv.shared]
 PORT = "5000"
-LAVALINK_PASSWORD = "https://dsc.gg/ajidevserver"
+LAVALINK_PASSWORD = "https://seretia.link/discord"
 LAVALINK_URI = "https://lavalinkv4.serenetia.com"
 
 [[ports]]

@@ -8,7 +8,7 @@
     "antinuke": {
       "enabled": true,
       "threshold": 3,
-      "interval": 10000,
+      "interval": 5,
       "action": "quarantine"
     },
     "automod": {
