@@ -10,6 +10,7 @@ A comprehensive Discord security bot with Anti-Nuke, Advanced Automod, and Raid/
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Discord bot: `cd artifacts/discord-bot && python main.py` (workflow: "Discord Bot"). Python deps installed via uv (discord.py, aiohttp, flask, wavelink, PyNaCl). Requires `DISCORD_TOKEN` and `DISCORD_BOT_OWNER_ID` secrets — both are set.
 
 ## Stack
 
