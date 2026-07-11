@@ -58,6 +58,7 @@ COGS = [
     "cogs.alias",
     "cogs.reactions",
     "cogs.eventlog",
+    "cogs.information",
 ]
 
 
