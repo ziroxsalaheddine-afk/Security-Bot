@@ -32,9 +32,9 @@ class Information(commands.Cog):
         # Either way we fall back to a plain ID string so the command never dies.
         try:
             owner = guild.owner or await guild.fetch_member(guild.owner_id)
-            owner_display = f"<a:Red_Crown:1497198533621715155> {owner.mention}"
+            owner_display = owner.mention
         except Exception:
-            owner_display = f"<a:Red_Crown:1497198533621715155> `{guild.owner_id}`"
+            owner_display = f"`{guild.owner_id}`"
 
         # ── Safe ban count ─────────────────────────────────────────────────────
         # Requires Ban Members permission. Falls back gracefully on any error.
@@ -81,25 +81,25 @@ class Information(commands.Cog):
         elif guild.splash:
             e.set_image(url=guild.splash.url)
 
-        e.add_field(name="Server ID", value=f"`{guild.id}`",           inline=True)
-        e.add_field(name="Owner",     value=owner_display,              inline=True)
-        e.add_field(name="Shard",     value=f"`#{shard_num}`",          inline=True)
+        e.add_field(name="Server ID", value=f"`{guild.id}`",                    inline=True)
+        e.add_field(name="Owner",     value=owner_display,                     inline=True)
+        e.add_field(name="Shard",     value=f"`#{shard_num}`",                 inline=True)
 
-        e.add_field(name="Members", value=f"👥 `{guild.member_count}`", inline=True)
+        e.add_field(name="Members", value=f"`{guild.member_count}`",           inline=True)
         e.add_field(
             name="Channels",
             value=(
-                f"📑 Text: `{text_ch}` · 🔊 Voice: `{voice_ch}`\n"
-                f"📂 Categories: `{cats}` · 🧵 Threads: `{threads}`\n"
+                f"Text: `{text_ch}` · Voice: `{voice_ch}`\n"
+                f"Categories: `{cats}` · Threads: `{threads}`\n"
                 f"**Total:** `{total_ch}`"
             ),
             inline=True,
         )
-        e.add_field(name="Region", value=f"📡 `{guild.preferred_locale}`", inline=True)
+        e.add_field(name="Region", value=f"`{guild.preferred_locale}`",        inline=True)
 
-        e.add_field(name="Roles",    value=f"<a:11pm_cc_1:1500648629159985283> `{len(guild.roles)}`",  inline=True)
-        e.add_field(name="Emojis",   value=f"<:emoji_149:1497747690514288690> `{len(guild.emojis)}`",  inline=True)
-        e.add_field(name="Stickers", value=f"<a:star11:1401192456938324123> `{len(guild.stickers)}`",  inline=True)
+        e.add_field(name="Roles",    value=f"`{len(guild.roles)}`",            inline=True)
+        e.add_field(name="Emojis",   value=f"`{len(guild.emojis)}`",           inline=True)
+        e.add_field(name="Stickers", value=f"`{len(guild.stickers)}`",         inline=True)
 
         e.add_field(
             name="Verification Level",
@@ -108,12 +108,12 @@ class Information(commands.Cog):
         )
         e.add_field(
             name="Boost Count",
-            value=f"<a:Nitro_boosting_level:1500645983116070952> `{boost_count}` (Tier `{boost_tier}`)",
+            value=f"`{boost_count}` (Tier `{boost_tier}`)",
             inline=True,
         )
-        e.add_field(name="Vanity URL",     value=f"<:linksnakes:1481401437949919253> `{vanity}`",      inline=True)
-        e.add_field(name="Server Created", value=f"<t:{created_ts}:R>",                                inline=True)
-        e.add_field(name="Ban Count",      value=f"<a:11pm_banned:1039486029159207003> `{ban_count}`", inline=True)
+        e.add_field(name="Vanity URL",     value=f"`{vanity}`",                inline=True)
+        e.add_field(name="Server Created", value=f"<t:{created_ts}:R>",        inline=True)
+        e.add_field(name="Ban Count",      value=f"`{ban_count}`",             inline=True)
 
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
