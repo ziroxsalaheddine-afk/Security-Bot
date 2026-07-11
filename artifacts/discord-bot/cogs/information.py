@@ -27,28 +27,37 @@ class Information(commands.Cog):
     async def serverinfo(self, ctx: commands.Context):
         guild = ctx.guild
 
-        # Fetch owner (may not be cached)
-        owner = guild.owner or await guild.fetch_member(guild.owner_id)
+        # ── Safe owner fetch ───────────────────────────────────────────────────
+        # guild.owner is None when not cached; fetch_member fails if they left.
+        # Either way we fall back to a plain ID string so the command never dies.
+        try:
+            owner = guild.owner or await guild.fetch_member(guild.owner_id)
+            owner_display = f"<a:Red_Crown:1497198533621715155> {owner.mention}"
+        except Exception:
+            owner_display = f"<a:Red_Crown:1497198533621715155> `{guild.owner_id}`"
 
-        # Channel breakdown
+        # ── Safe ban count ─────────────────────────────────────────────────────
+        # Requires Ban Members permission. Falls back gracefully on any error.
+        try:
+            ban_count = 0
+            async for _ in guild.bans(limit=None):
+                ban_count += 1
+        except Exception:
+            ban_count = "Missing Perms"
+
+        # ── Channel breakdown ──────────────────────────────────────────────────
         text_ch  = len(guild.text_channels)
         voice_ch = len(guild.voice_channels)
         cats     = len(guild.categories)
         threads  = len(guild.threads)
         total_ch = text_ch + voice_ch + len(getattr(guild, "stage_channels", []))
 
-        # Ban count — requires Ban Members permission on the bot
-        try:
-            ban_count = sum(1 async for _ in guild.bans(limit=None))
-        except (discord.Forbidden, discord.HTTPException):
-            ban_count = "N/A"
-
-        # Boost info
+        # ── Misc ───────────────────────────────────────────────────────────────
         boost_count = guild.premium_subscription_count or 0
         boost_tier  = guild.premium_tier or 0
-
-        # Vanity URL
-        vanity = f"discord.gg/{guild.vanity_url_code}" if guild.vanity_url_code else "None"
+        vanity      = f"discord.gg/{guild.vanity_url_code}" if guild.vanity_url_code else "None"
+        shard_num   = (guild.shard_id + 1) if guild.shard_id is not None else 1
+        created_ts  = int(guild.created_at.timestamp())
 
         verif_map = {
             discord.VerificationLevel.none:    "None",
@@ -58,8 +67,7 @@ class Information(commands.Cog):
             discord.VerificationLevel.highest: "Highest",
         }
 
-        created_ts = int(guild.created_at.timestamp())
-
+        # ── Build embed ────────────────────────────────────────────────────────
         e = discord.Embed(
             title=guild.name,
             color=COL,
@@ -67,21 +75,15 @@ class Information(commands.Cog):
         )
         if guild.icon:
             e.set_thumbnail(url=guild.icon.url)
-        banner = guild.banner or guild.splash
-        if banner:
-            e.set_image(url=banner.url)
+        # Banner takes priority over splash for the large image
+        if guild.banner:
+            e.set_image(url=guild.banner.url)
+        elif guild.splash:
+            e.set_image(url=guild.splash.url)
 
-        e.add_field(name="Server ID",  value=f"`{guild.id}`", inline=True)
-        e.add_field(
-            name="Owner",
-            value=f"<a:Red_Crown:1497198533621715155> {owner.mention if owner else '`Unknown`'}",
-            inline=True,
-        )
-        e.add_field(
-            name="Shard",
-            value=f"`#{guild.shard_id + 1 if guild.shard_id is not None else 1}`",
-            inline=True,
-        )
+        e.add_field(name="Server ID", value=f"`{guild.id}`",           inline=True)
+        e.add_field(name="Owner",     value=owner_display,              inline=True)
+        e.add_field(name="Shard",     value=f"`#{shard_num}`",          inline=True)
 
         e.add_field(name="Members", value=f"👥 `{guild.member_count}`", inline=True)
         e.add_field(
@@ -95,9 +97,9 @@ class Information(commands.Cog):
         )
         e.add_field(name="Region", value=f"📡 `{guild.preferred_locale}`", inline=True)
 
-        e.add_field(name="Roles",    value=f"<a:11pm_cc_1:1500648629159985283> `{len(guild.roles)}`",       inline=True)
-        e.add_field(name="Emojis",   value=f"<:emoji_149:1497747690514288690> `{len(guild.emojis)}`",       inline=True)
-        e.add_field(name="Stickers", value=f"<a:star11:1401192456938324123> `{len(guild.stickers)}`",       inline=True)
+        e.add_field(name="Roles",    value=f"<a:11pm_cc_1:1500648629159985283> `{len(guild.roles)}`",  inline=True)
+        e.add_field(name="Emojis",   value=f"<:emoji_149:1497747690514288690> `{len(guild.emojis)}`",  inline=True)
+        e.add_field(name="Stickers", value=f"<a:star11:1401192456938324123> `{len(guild.stickers)}`",  inline=True)
 
         e.add_field(
             name="Verification Level",
@@ -109,9 +111,9 @@ class Information(commands.Cog):
             value=f"<a:Nitro_boosting_level:1500645983116070952> `{boost_count}` (Tier `{boost_tier}`)",
             inline=True,
         )
-        e.add_field(name="Vanity URL",     value=f"<:linksnakes:1481401437949919253> `{vanity}`",            inline=True)
-        e.add_field(name="Server Created", value=f"<t:{created_ts}:R>",                                     inline=True)
-        e.add_field(name="Ban Count",      value=f"<a:11pm_banned:1039486029159207003> `{ban_count}`",       inline=True)
+        e.add_field(name="Vanity URL",     value=f"<:linksnakes:1481401437949919253> `{vanity}`",      inline=True)
+        e.add_field(name="Server Created", value=f"<t:{created_ts}:R>",                                inline=True)
+        e.add_field(name="Ban Count",      value=f"<a:11pm_banned:1039486029159207003> `{ban_count}`", inline=True)
 
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
