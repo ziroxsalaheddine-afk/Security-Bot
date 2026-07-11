@@ -50,7 +50,10 @@
       "minAccountAge": 7,
       "action": "kick"
     },
-    "autoreact": true
+    "autoreact": true,
+    "autoreactUsers": {
+      "1186279659206357012": "<a:ugh:1497199349460107425>"
+    }
   },
   "logs": {
     "channelId": 1496697545190015029
