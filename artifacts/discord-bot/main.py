@@ -118,8 +118,24 @@ class Guardian(commands.Bot):
 
         if nodes:
             try:
-                await wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100)
+                # wavelink's internal websocket connect loop retries forever
+                # and never raises if a node is unreachable, which would
+                # otherwise hang setup_hook (and therefore the whole bot,
+                # since it can't reach the Discord gateway until this
+                # coroutine returns). Bound it so a dead/misconfigured node
+                # can't take the entire bot offline — music just stays
+                # disabled until a node becomes reachable.
+                await asyncio.wait_for(
+                    wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100),
+                    timeout=15,
+                )
                 log.info("Connecting to %d Lavalink node(s)…", len(nodes))
+            except asyncio.TimeoutError:
+                log.warning(
+                    "Timed out connecting to Lavalink node(s) after 15s — "
+                    "continuing startup without blocking; music will come "
+                    "online once a node becomes reachable."
+                )
             except Exception as exc:
                 log.error("Failed to initialise Lavalink pool: %s", exc)
         else:
