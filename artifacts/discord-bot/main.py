@@ -1,9 +1,12 @@
 import os
+import pkgutil
 import asyncio
 import logging
+
 import discord
 import wavelink
 from discord.ext import commands
+
 from utils import db
 from utils import alias_db
 from utils import gatekeeper
@@ -17,21 +20,21 @@ logging.basicConfig(
 log = logging.getLogger("guardian")
 
 intents = discord.Intents.default()
-intents.members        = True
+intents.members         = True
 intents.message_content = True
-intents.moderation     = True
-intents.guilds         = True
-intents.voice_states   = True      # Required for all voice/music operations
+intents.moderation      = True
+intents.guilds          = True
+intents.voice_states    = True     # Required for all voice/music operations
 
 # Public Lavalink v4 (SSL) fallback nodes: (uri, password). Sourced from the
-# community-maintained list at https://lavalink.darrennathanael.com/SSL —
+# community-maintained list at https://lavalink-list.darrennathanael.com —
 # these are free, volunteer-hosted nodes, so they occasionally go down or
 # rotate credentials. If music stops working and the logs show ALL nodes
-# failing to connect, open that page, grab fresh Host/Port/Password values,
+# failing to connect, open that page, grab fresh host/port/password values,
 # and replace the entries below (keep the "https://host:port" format).
 # wavelink.Pool connects to every node in this list and load-balances across
-# whichever ones are actually reachable, so one dead node no longer takes
-# music offline entirely.
+# whichever ones are actually reachable, so one dead node doesn't take music
+# offline entirely.
 FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
     # Amane & AjieDev
     ("https://lavalinkv4.serenetia.com:443", "https://seretia.link/discord"),
@@ -41,25 +44,21 @@ FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
     ("https://lava-v4.millohost.my.id:443", "https://discord.gg/mjS5J2K3ep"),
 ]
 
-COGS = [
-    "cogs.antinuke",
-    "cogs.clone",
-    "cogs.antiraid",
-    "cogs.automod",
-    "cogs.admin",
-    "cogs.help",
-    "cogs.setup",
-    "cogs.voice",
-    "cogs.owner",
-    "cogs.backup",
-    "cogs.warden",
-    "cogs.music",
-    "cogs.dj",
-    "cogs.alias",
-    "cogs.reactions",
-    "cogs.eventlog",
-    "cogs.information",
-]
+
+def _discover_cogs() -> list[str]:
+    """Scan the cogs/ package and return the dotted import path of every
+    module inside it, so new cogs are picked up automatically without ever
+    having to edit this file again. Files starting with "_" (e.g.
+    __init__.py) are skipped.
+    """
+    import cogs as cogs_package
+
+    discovered = []
+    for module in pkgutil.iter_modules(cogs_package.__path__):
+        if module.name.startswith("_"):
+            continue
+        discovered.append(f"cogs.{module.name}")
+    return sorted(discovered)
 
 
 def _get_prefix(bot: "Guardian", message: discord.Message) -> str:
@@ -78,21 +77,26 @@ class Guardian(commands.Bot):
         alias_db.init()
         self.add_check(gatekeeper.check_or_raise)
 
-        for cog in COGS:
+        for cog in _discover_cogs():
             try:
                 await self.load_extension(cog)
                 log.info("Loaded cog: %s", cog)
             except Exception as e:
                 log.error("Failed to load cog %s: %s", cog, e)
 
-        # ── Connect Lavalink v4 node(s) (wavelink 3.x) ────────────────────────
-        # A single public node going down (e.g. lavalinkv4.serenetia.com
-        # timing out) used to take music offline entirely. We now connect to
-        # a *pool* of nodes — wavelink.Pool automatically routes new players
-        # to whichever node is healthy, so one dead node no longer breaks
-        # +play for everyone. LAVALINK_URI/LAVALINK_PASSWORD (env) is always
-        # tried first if set, so self-hosted/private nodes still take
-        # priority; the public fallbacks below only fill in the gaps.
+        # ── Connect Lavalink v4 node(s) (wavelink 3.x) in the background ─────
+        # wavelink's internal websocket connect loop retries forever and
+        # never raises if a node is unreachable. Awaiting it directly here
+        # would hang setup_hook — and therefore the whole bot, since it
+        # can't reach the Discord gateway until this coroutine returns. By
+        # firing it off as a background task instead of awaiting it, the
+        # bot always finishes startup and logs into Discord immediately,
+        # regardless of whether any Lavalink node is reachable. Music simply
+        # comes online whenever a node connects (or stays disabled if none
+        # ever do).
+        self.loop.create_task(self._connect_lavalink())
+
+    async def _connect_lavalink(self):
         lava_uri  = os.environ.get("LAVALINK_URI")
         lava_pass = os.environ.get("LAVALINK_PASSWORD")
 
@@ -116,38 +120,32 @@ class Guardian(commands.Bot):
                 password=password,
             ))
 
-        if nodes:
-            try:
-                # wavelink's internal websocket connect loop retries forever
-                # and never raises if a node is unreachable, which would
-                # otherwise hang setup_hook (and therefore the whole bot,
-                # since it can't reach the Discord gateway until this
-                # coroutine returns). Bound it so a dead/misconfigured node
-                # can't take the entire bot offline — music just stays
-                # disabled until a node becomes reachable.
-                await asyncio.wait_for(
-                    wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100),
-                    timeout=15,
-                )
-                log.info("Connecting to %d Lavalink node(s)…", len(nodes))
-            except asyncio.TimeoutError:
-                log.warning(
-                    "Timed out connecting to Lavalink node(s) after 15s — "
-                    "continuing startup without blocking; music will come "
-                    "online once a node becomes reachable."
-                )
-            except Exception as exc:
-                log.error("Failed to initialise Lavalink pool: %s", exc)
-        else:
-            log.warning(
-                "No Lavalink nodes configured — music commands disabled."
+        if not nodes:
+            log.warning("No Lavalink nodes configured — music commands disabled.")
+            return
+
+        try:
+            # Bound the connect attempt so a dead/misconfigured node can't
+            # spam retries forever in the background without ever giving up.
+            await asyncio.wait_for(
+                wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100),
+                timeout=15,
             )
+            log.info("Connected to Lavalink — %d node(s) configured.", len(nodes))
+        except asyncio.TimeoutError:
+            log.warning(
+                "Timed out connecting to Lavalink node(s) after 15s — "
+                "music will come online once a node becomes reachable. "
+                "The bot itself is unaffected and remains online."
+            )
+        except Exception as exc:
+            log.error("Failed to initialise Lavalink pool: %s", exc)
 
     async def on_ready(self):
         print()
         print("  ╔══════════════════════════════════════╗")
-        print("  ║     G U A R D I A N   B O T   v2    ║")
-        print("  ║     Python Security System           ║")
+        print("  ║     G U A R D I A N   B O T   v2      ║")
+        print("  ║     Python Security System            ║")
         print("  ╚══════════════════════════════════════╝")
         print()
         print(f"  [ONLINE] {self.user} (ID: {self.user.id})")
@@ -209,13 +207,23 @@ class Guardian(commands.Bot):
             log.error("Command error in %s: %s", ctx.command, error)
 
 
+def _get_token() -> str:
+    """Read the bot token from the environment. Supports both TOKEN (common
+    on external hosting platforms like Railway/Render/Heroku) and
+    DISCORD_TOKEN (used by this project's Replit secrets), so the exact same
+    file works unmodified in either environment.
+    """
+    return os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN") or ""
+
+
 bot = Guardian()
 
 if __name__ == "__main__":
-    token = os.environ.get("DISCORD_TOKEN")
+    token = _get_token()
     if not token:
-        log.critical("DISCORD_TOKEN is not set. Exiting.")
+        log.critical("No bot token found. Set TOKEN or DISCORD_TOKEN in your environment.")
         raise SystemExit(1)
+
     db.get()
     keep_alive()
     bot.run(token, log_handler=None)
