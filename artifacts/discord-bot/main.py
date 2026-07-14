@@ -26,22 +26,14 @@ intents.moderation      = True
 intents.guilds          = True
 intents.voice_states    = True     # Required for all voice/music operations
 
-# Public Lavalink v4 (SSL) fallback nodes: (uri, password). Sourced from the
-# community-maintained list at https://lavalink-list.darrennathanael.com —
-# these are free, volunteer-hosted nodes, so they occasionally go down or
-# rotate credentials. If music stops working and the logs show ALL nodes
-# failing to connect, open that page, grab fresh host/port/password values,
-# and replace the entries below (keep the "https://host:port" format).
-# wavelink.Pool connects to every node in this list and load-balances across
-# whichever ones are actually reachable, so one dead node doesn't take music
-# offline entirely.
+# Lavalink v4 node(s) used for music. If LAVALINK_URI / LAVALINK_PASSWORD env
+# vars are set they become the "MAIN" node; the entries below are registered
+# as additional nodes and wavelink load-balances across all reachable ones.
+# secure=false → plain HTTP (port 3000); switch to https:// + 443 if the
+# host ever enables TLS.
 FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
-    # Amane & AjieDev
-    ("https://lavalinkv4.serenetia.com:443", "https://seretia.link/discord"),
-    # Jirayu
-    ("https://lavalink.jirayu.net:443", "youshallnotpass"),
-    # AneFaiz / Millohost
-    ("https://lava-v4.millohost.my.id:443", "https://discord.gg/mjS5J2K3ep"),
+    # nyxbot.app — sg2
+    ("http://sg2-nodelink.nyxbot.app:3000", "nyxbot.app/support"),
 ]
 
 
