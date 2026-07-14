@@ -32,8 +32,8 @@ intents.voice_states    = True     # Required for all voice/music operations
 # secure=false → plain HTTP (port 3000); switch to https:// + 443 if the
 # host ever enables TLS.
 FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
-    # nyxbot.app — sg2
-    ("http://sg2-nodelink.nyxbot.app:3000", "nyxbot.app/support"),
+    # Amane & AjieDev — serenetia (SSL)
+    ("https://lavalinkv4.serenetia.com:443", "https://seretia.link/discord"),
 ]
 
 
