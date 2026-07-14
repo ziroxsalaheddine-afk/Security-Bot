@@ -7,6 +7,9 @@ wavelink==3.5.2
 # ── HTTP client (used internally by discord.py) ───────────────────────────────
 aiohttp==3.14.1
 
+# ── SOCKS5 proxy support for aiohttp ──────────────────────────────────────────
+aiohttp-socks==0.10.1
+
 # ── Keep-alive web server (UptimeRobot ping target) ───────────────────────────
 flask==3.1.3
 

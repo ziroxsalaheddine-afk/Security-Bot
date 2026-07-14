@@ -9,15 +9,15 @@ Attempt-counting rules:
     retry the SAME username immediately. Attempt counter does NOT advance.
   • After 100 consecutive proxy failures with no 200 OK, the search stops.
 
-Proxy priority:
-  1. PROXY_URL env-var (always tried first; never permanently evicted)
-  2. Merged pool from three public sources (GitHub × 2 + proxyscrape)
-     — HTTPS proxies sorted before HTTP; each group shuffled independently
-  3. Direct connection — last resort when pool is fully dead
+Proxy priority (per request):
+  1. PROXY_URL env-var (tried first, never permanently evicted)
+  2. SOCKS5 proxies  — most reliable for bypassing Cloudflare/Discord blocks
+  3. HTTPS proxies   — support TLS CONNECT tunnels
+  4. HTTP proxies    — last resort
+  5. Direct          — when pool is fully dead
 
-Performance:
-  • 1.5 s per-proxy timeout so dead proxies are discarded in under 2 s
-  • Typing keepalive fires every 5 s so Discord never considers the bot frozen
+SOCKS5 requests use aiohttp_socks.ProxyConnector (one connector per probe).
+HTTP/HTTPS requests use aiohttp's built-in proxy= parameter on the shared session.
 """
 
 import asyncio
@@ -28,6 +28,7 @@ import string
 from datetime import datetime, timezone
 
 import aiohttp
+from aiohttp_socks import ProxyConnector, ProxyConnectionError as SocksConnError
 import discord
 from discord.ext import commands
 
@@ -39,14 +40,18 @@ COL_LAVENDER = 0xC8B6FF
 
 DISCORD_API_URL = "https://discord.com/api/v9/unique-username/username-attempt-unauthed"
 
-PROXY_SOURCES = [
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt",
-    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+PROXY_SOURCES: list[tuple[str, str]] = [
+    # (url, protocol_prefix_for_bare_ip:port_lines)
+    ("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",  "socks5"),
+    ("https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",       "socks5"),
+    ("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/https.txt",   "https"),
+    ("https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",    "http"),
+    ("https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",         "http"),
     (
         "https://api.proxyscrape.com/v2/"
         "?request=displayproxies&protocol=http&timeout=2000"
-        "&country=all&ssl=yes&anonymity=anonymous"
+        "&country=all&ssl=yes&anonymity=anonymous",
+        "http",
     ),
 ]
 
@@ -57,20 +62,18 @@ _BROWSER_HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Content-Type": "application/json",
-    "Accept": "application/json",
+    "Accept":        "application/json",
 }
 
 MAX_ATTEMPTS          = 15    # only 200 OK responses count toward this
 TARGET_FOUND          = 5     # stop early once this many available names found
 MAX_CONSECUTIVE_FAILS = 100   # bail after this many consecutive proxy failures
-PROXY_REQUEST_TIMEOUT = 1.5   # seconds per proxied request (fast discard)
+PROXY_REQUEST_TIMEOUT = 1.5   # seconds per proxied request
 SOURCE_FETCH_TIMEOUT  = 12    # seconds to fetch one proxy-list source
-INTER_ATTEMPT_GAP     = 0.15  # seconds between 200 OK attempts
+INTER_ATTEMPT_GAP     = 0.15  # seconds between successful 200 OK attempts
 TYPING_INTERVAL       = 5.0   # seconds between typing keepalives
 
-# Characters valid anywhere in a Discord username
 _ALL_CHARS  = string.ascii_lowercase + string.digits + "_."
-# Safe for first/last position (period not allowed at edges)
 _SAFE_CHARS = string.ascii_lowercase + string.digits + "_"
 
 
@@ -90,8 +93,32 @@ def _gen_username(length: int) -> str:
 
 # ── Proxy fetching ─────────────────────────────────────────────────────────────
 
-async def _fetch_one_source(session: aiohttp.ClientSession, url: str) -> list[str]:
-    """Fetch one proxy-list source. Returns a list of proxy URL strings."""
+def _normalise_proxy_line(line: str, default_proto: str) -> str | None:
+    """
+    Turn a raw proxy line into a fully-qualified URL string.
+
+    Handles:
+      • Lines already prefixed:  socks5://1.2.3.4:1080   → unchanged
+      • Bare ip:port lines:      1.2.3.4:1080             → <default_proto>://1.2.3.4:1080
+      • Blank / comment lines:   ''  /  '#...'            → None
+    """
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None
+    known = ("socks5://", "socks4://", "https://", "http://")
+    if any(line.startswith(p) for p in known):
+        return line
+    if ":" in line:
+        return f"{default_proto}://{line}"
+    return None
+
+
+async def _fetch_one_source(
+    session: aiohttp.ClientSession,
+    url: str,
+    default_proto: str,
+) -> list[str]:
+    """Fetch one proxy-list source. Returns fully-qualified proxy URL strings."""
     try:
         async with session.get(
             url, timeout=aiohttp.ClientTimeout(total=SOURCE_FETCH_TIMEOUT)
@@ -99,17 +126,12 @@ async def _fetch_one_source(session: aiohttp.ClientSession, url: str) -> list[st
             if resp.status != 200:
                 log.debug("proxy source %s → HTTP %d", url, resp.status)
                 return []
-            text = await resp.text()
-            results: list[str] = []
-            for line in text.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("https://") or line.startswith("http://"):
-                    results.append(line)
-                elif ":" in line:
-                    # bare ip:port — assume http
-                    results.append(f"http://{line}")
+            text    = await resp.text()
+            results = []
+            for raw in text.splitlines():
+                normalised = _normalise_proxy_line(raw, default_proto)
+                if normalised:
+                    results.append(normalised)
             log.debug("proxy source %s → %d proxies", url, len(results))
             return results
     except Exception as exc:
@@ -119,34 +141,33 @@ async def _fetch_one_source(session: aiohttp.ClientSession, url: str) -> list[st
 
 async def _build_proxy_pool(session: aiohttp.ClientSession) -> list[str]:
     """
-    Fetch all proxy sources concurrently, deduplicate, then sort so HTTPS
-    proxies come before HTTP (each group shuffled independently).
-    Returns a flat list of proxy URL strings.
+    Fetch all proxy sources concurrently, deduplicate, then sort by protocol:
+      SOCKS5 → HTTPS → HTTP
+    Each group is shuffled independently for load distribution.
     """
-    lists   = await asyncio.gather(*[_fetch_one_source(session, u) for u in PROXY_SOURCES])
-    merged  = list({p for sublist in lists for p in sublist})  # deduplicate
+    tasks   = [_fetch_one_source(session, url, proto) for url, proto in PROXY_SOURCES]
+    lists   = await asyncio.gather(*tasks)
+    merged  = list({p for sub in lists for p in sub})  # deduplicate
 
-    https_pool = [p for p in merged if p.startswith("https://")]
-    http_pool  = [p for p in merged if not p.startswith("https://")]
-    random.shuffle(https_pool)
-    random.shuffle(http_pool)
-    ordered = https_pool + http_pool  # HTTPS first — better Cloudflare bypass
+    socks5 = [p for p in merged if p.startswith("socks5://")]
+    https  = [p for p in merged if p.startswith("https://")]
+    http   = [p for p in merged if p.startswith("http://")]
 
+    random.shuffle(socks5)
+    random.shuffle(https)
+    random.shuffle(http)
+
+    ordered = socks5 + https + http
     log.info(
-        "searchuser: proxy pool — %d HTTPS + %d HTTP = %d total",
-        len(https_pool), len(http_pool), len(ordered),
+        "searchuser: proxy pool — %d SOCKS5 + %d HTTPS + %d HTTP = %d total",
+        len(socks5), len(https), len(http), len(ordered),
     )
     return ordered
 
 
-# ── Proxy pool with round-robin + dead-proxy eviction ─────────────────────────
+# ── Proxy pool ────────────────────────────────────────────────────────────────
 
 class _ProxyPool:
-    """
-    Tracks live proxies, evicts dead ones, round-robins through the rest.
-    The PROXY_URL env proxy re-enters the rotation on the next command invocation.
-    """
-
     def __init__(self, env_proxy: str | None, fetched: list[str]) -> None:
         self._env   = env_proxy
         self._pool  = list(fetched)
@@ -154,12 +175,11 @@ class _ProxyPool:
         self._idx   = 0
 
     def next(self) -> str | None:
-        """Return the next candidate proxy URL, or None for a direct request."""
         if self._env and self._env not in self._dead:
             return self._env
         alive = [p for p in self._pool if p not in self._dead]
         if not alive:
-            return None  # direct connection
+            return None
         proxy = alive[self._idx % len(alive)]
         self._idx += 1
         return proxy
@@ -170,9 +190,10 @@ class _ProxyPool:
 
     @property
     def has_live(self) -> bool:
-        env_live     = bool(self._env and self._env not in self._dead)
-        fetched_live = any(p for p in self._pool if p not in self._dead)
-        return env_live or fetched_live
+        return (
+            bool(self._env and self._env not in self._dead)
+            or any(p for p in self._pool if p not in self._dead)
+        )
 
     @property
     def total(self) -> int:
@@ -186,22 +207,21 @@ class _ProxyPool:
 # ── Single-request probe ───────────────────────────────────────────────────────
 
 class _Probe:
-    """Outcome of one POST to the Discord username endpoint."""
     __slots__ = ("ok", "available", "rate_limited", "bad_proxy")
 
     def __init__(self, *, ok=False, available=False, rate_limited=False, bad_proxy=False):
         self.ok           = ok
         self.available    = available
-        self.rate_limited = rate_limited  # Discord 429 through a live proxy
-        self.bad_proxy    = bad_proxy     # 403 / 5xx / timeout / conn error
+        self.rate_limited = rate_limited
+        self.bad_proxy    = bad_proxy
 
 
-async def _probe(
+async def _probe_http(
     session: aiohttp.ClientSession,
     username: str,
     proxy: str | None,
 ) -> _Probe:
-    """POST one username check; never raises."""
+    """Probe via HTTP/HTTPS proxy (or direct) using the shared session."""
     try:
         kw: dict = dict(
             json={"username": username},
@@ -213,14 +233,10 @@ async def _probe(
 
         async with session.post(DISCORD_API_URL, **kw) as resp:
             if resp.status == 200:
-                data  = await resp.json()
-                taken = data.get("taken", True)
-                return _Probe(ok=True, available=not taken)
+                data = await resp.json()
+                return _Probe(ok=True, available=not data.get("taken", True))
             if resp.status == 429:
-                log.debug("searchuser: 429 via proxy=%s", proxy)
                 return _Probe(rate_limited=True)
-            # 403, 502, 503, etc.
-            log.debug("searchuser: HTTP %d via proxy=%s for %s", resp.status, proxy, username)
             return _Probe(bad_proxy=True)
 
     except (
@@ -230,20 +246,59 @@ async def _probe(
         aiohttp.ClientOSError,
         asyncio.TimeoutError,
     ) as exc:
-        log.debug("searchuser: proxy conn err (%s) proxy=%s", type(exc).__name__, proxy)
+        log.debug("searchuser: http probe err (%s) proxy=%s", type(exc).__name__, proxy)
         return _Probe(bad_proxy=True)
     except Exception as exc:
-        log.warning("searchuser: unexpected probe error proxy=%s: %s", proxy, exc)
+        log.warning("searchuser: http probe unexpected error proxy=%s: %s", proxy, exc)
         return _Probe(bad_proxy=True)
 
 
-# ── Typing keepalive ───────────────────────────────────────────────────────────
+async def _probe_socks5(username: str, proxy: str) -> _Probe:
+    """Probe via SOCKS5 proxy — creates a dedicated connector per call."""
+    try:
+        connector = ProxyConnector.from_url(
+            proxy,
+            rdns=True,
+            ssl=False,
+        )
+        async with aiohttp.ClientSession(
+            connector=connector,
+            headers=_BROWSER_HEADERS,
+        ) as sess:
+            async with sess.post(
+                DISCORD_API_URL,
+                json={"username": username},
+                timeout=aiohttp.ClientTimeout(total=PROXY_REQUEST_TIMEOUT),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return _Probe(ok=True, available=not data.get("taken", True))
+                if resp.status == 429:
+                    return _Probe(rate_limited=True)
+                return _Probe(bad_proxy=True)
+
+    except (SocksConnError, asyncio.TimeoutError) as exc:
+        log.debug("searchuser: socks5 probe err (%s) proxy=%s", type(exc).__name__, proxy)
+        return _Probe(bad_proxy=True)
+    except Exception as exc:
+        log.warning("searchuser: socks5 probe unexpected error proxy=%s: %s", proxy, exc)
+        return _Probe(bad_proxy=True)
+
+
+async def _probe(
+    session: aiohttp.ClientSession,
+    username: str,
+    proxy: str | None,
+) -> _Probe:
+    """Route to the correct probe function based on proxy protocol."""
+    if proxy and proxy.startswith("socks5://"):
+        return await _probe_socks5(username, proxy)
+    return await _probe_http(session, username, proxy)
+
+
+# ── Typing keepalive ──────────────────────────────────────────────────────────
 
 async def _typing_keepalive(channel: discord.TextChannel, stop: asyncio.Event) -> None:
-    """
-    Trigger the typing indicator every TYPING_INTERVAL seconds until *stop* is set.
-    Prevents Discord from showing the bot as unresponsive during long proxy cycling.
-    """
     while not stop.is_set():
         try:
             await channel.trigger_typing()
@@ -255,7 +310,7 @@ async def _typing_keepalive(channel: discord.TextChannel, stop: asyncio.Event) -
             pass
 
 
-# ── Cog ───────────────────────────────────────────────────────────────────────
+# ── Cog ──────────────────────────────────────────────────────────────────────
 
 class SearchUser(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -284,25 +339,28 @@ class SearchUser(commands.Cog):
 
         env_proxy = os.environ.get("PROXY_URL") or None
 
-        available:             list[str] = []
-        attempts:              int       = 0
-        consecutive_fails:     int       = 0
-        stopped_rate_limited:  bool      = False
-        stopped_no_proxies:    bool      = False
+        available:            list[str] = []
+        attempts:             int       = 0
+        consecutive_fails:    int       = 0
+        stopped_rate_limited: bool      = False
+        stopped_no_proxies:   bool      = False
 
-        # Typing keepalive — fires every TYPING_INTERVAL seconds in the background
-        stop_event   = asyncio.Event()
-        typing_task  = asyncio.create_task(_typing_keepalive(ctx.channel, stop_event))
+        stop_event  = asyncio.Event()
+        typing_task = asyncio.create_task(_typing_keepalive(ctx.channel, stop_event))
 
         try:
             async with aiohttp.ClientSession() as session:
                 fetched = await _build_proxy_pool(session)
                 pool    = _ProxyPool(env_proxy, fetched)
 
+                # Count protocol breakdown for the embed
+                n_socks5 = sum(1 for p in fetched if p.startswith("socks5://"))
+                n_https  = sum(1 for p in fetched if p.startswith("https://"))
+                n_http   = len(fetched) - n_socks5 - n_https
+
                 while len(available) < TARGET_FOUND and attempts < MAX_ATTEMPTS:
                     username = _gen_username(length)
 
-                    # ── Inner loop: rotate proxies until we get a 200 OK ──────
                     while True:
                         proxy  = pool.next()
                         result = await _probe(session, username, proxy)
@@ -312,7 +370,7 @@ class SearchUser(commands.Cog):
                             consecutive_fails  = 0
                             if result.available:
                                 available.append(username)
-                            break  # move to next username
+                            break
 
                         if result.rate_limited:
                             pool.mark_dead(proxy)
@@ -320,9 +378,9 @@ class SearchUser(commands.Cog):
                             if consecutive_fails >= MAX_CONSECUTIVE_FAILS:
                                 stopped_rate_limited = True
                                 break
-                            continue  # retry same username with next proxy
+                            continue
 
-                        # bad_proxy: 403 / 5xx / timeout
+                        # bad_proxy: 403 / 5xx / timeout / conn error
                         pool.mark_dead(proxy)
                         consecutive_fails += 1
 
@@ -331,7 +389,6 @@ class SearchUser(commands.Cog):
                             break
 
                         if not pool.has_live:
-                            # Pool fully dead — one last direct attempt
                             direct = await _probe(session, username, None)
                             if direct.ok:
                                 attempts          += 1
@@ -356,33 +413,32 @@ class SearchUser(commands.Cog):
             except asyncio.CancelledError:
                 pass
 
-        # ── Build result embed ─────────────────────────────────────────────────
+        # ── Result embed ──────────────────────────────────────────────────────
         embed = discord.Embed(
             title="Username Search Results",
             color=COL_LAVENDER,
             timestamp=datetime.now(timezone.utc),
         )
-        embed.add_field(name="Length Searched", value=f"`{length}` characters",            inline=True)
-        embed.add_field(name="Valid Attempts",  value=f"`{attempts}` / `{MAX_ATTEMPTS}`",  inline=True)
-        embed.add_field(name="Proxies Tested",  value=f"`{pool.dead_count}` / `{pool.total}`", inline=True)
+        embed.add_field(name="Length Searched", value=f"`{length}` characters",                 inline=True)
+        embed.add_field(name="Valid Attempts",  value=f"`{attempts}` / `{MAX_ATTEMPTS}`",       inline=True)
+        embed.add_field(name="Proxies Tested",  value=f"`{pool.dead_count}` / `{pool.total}`",  inline=True)
 
-        https_count = sum(1 for p in fetched if p.startswith("https://"))
-        http_count  = len(fetched) - https_count
-        proxy_src = (
-            f"custom `PROXY_URL` + {len(fetched)} fetched "
-            f"({https_count} HTTPS, {http_count} HTTP)" if env_proxy
-            else f"{len(fetched)} proxies ({https_count} HTTPS, {http_count} HTTP)" if fetched
-            else "none — direct connection only"
-        )
-        embed.add_field(name="Proxy Pool", value=proxy_src, inline=False)
+        pool_detail = (
+            f"🟣 SOCKS5: `{n_socks5}`  "
+            f"🔒 HTTPS: `{n_https}`  "
+            f"🌐 HTTP: `{n_http}`"
+        ) if fetched else "none — direct connection only"
+        if env_proxy:
+            pool_detail = f"Custom `PROXY_URL` + {pool_detail}"
+        embed.add_field(name="Proxy Pool", value=pool_detail, inline=False)
 
         if stopped_rate_limited:
             embed.add_field(
                 name="⚠️  Rate Limited by Discord",
                 value=(
                     f"`{MAX_CONSECUTIVE_FAILS}` proxies in a row received `429`. "
-                    "Discord is actively rate-limiting all these IPs. "
-                    "Wait a few minutes, or set a `PROXY_URL` secret with a premium proxy."
+                    "Discord is actively rate-limiting. "
+                    "Wait a few minutes or set `PROXY_URL` with a premium/residential proxy."
                 ),
                 inline=False,
             )
@@ -391,7 +447,7 @@ class SearchUser(commands.Cog):
                 name="⚠️  Proxy Pool Exhausted",
                 value=(
                     f"`{MAX_CONSECUTIVE_FAILS}` consecutive proxy failures. "
-                    "All fetched proxies are blocked or unreachable. "
+                    "All fetched proxies are blocked or unreachable from this host. "
                     "Set a `PROXY_URL` secret with a reliable private/residential proxy."
                 ),
                 inline=False,
@@ -414,10 +470,7 @@ class SearchUser(commands.Cog):
             )
 
         embed.set_footer(
-            text=(
-                "Note: 3-4 char usernames are highly competitive. "
-                "Set PROXY_URL for a reliable private proxy."
-            )
+            text="Note: 3-4 char usernames are highly competitive. Set PROXY_URL for reliable results."
         )
 
         try:
