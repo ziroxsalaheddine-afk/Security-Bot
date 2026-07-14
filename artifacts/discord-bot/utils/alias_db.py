@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 DB_PATH = Path(__file__).parent.parent / "aliases.sqlite3"
-MAX_ALIASES_PER_COMMAND = 3
+MAX_ALIASES_PER_COMMAND = 10
 
 _lock = threading.Lock()
 _ALIAS_RE = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")

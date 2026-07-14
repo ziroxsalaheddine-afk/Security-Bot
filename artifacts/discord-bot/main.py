@@ -178,7 +178,7 @@ class Guardian(commands.Bot):
         if isinstance(error, commands.CheckFailure):
             try:
                 await ctx.send(embed=gatekeeper.denial_embed(self))
-            except discord.Forbidden:
+            except discord.HTTPException:
                 pass
             return
         if isinstance(error, commands.CommandOnCooldown):
@@ -186,23 +186,29 @@ class Guardian(commands.Bot):
             # command's @commands.cooldown(...) funnels here instead of each
             # cog rolling its own message.
             seconds = max(1, round(error.retry_after))
-            await ctx.send(
-                embed=discord.Embed(
-                    title="Cooldown Notice",
-                    description=f"Patience please... just **{seconds}** seconds left, hhhhh",
-                    color=0x8E7CC3,
-                ),
-                delete_after=min(seconds, 10),
-            )
+            try:
+                await ctx.send(
+                    embed=discord.Embed(
+                        title="Cooldown Notice",
+                        description=f"• __Patience please... just **{seconds}** seconds left, Huh__ ⁘",
+                        color=0xC8B6FF,
+                    ),
+                    delete_after=min(seconds, 10),
+                )
+            except discord.HTTPException:
+                pass
             return
         elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(
-                embed=discord.Embed(
-                    description=f"❌ Missing argument: `{error.param.name}`",
-                    color=0xC0392B,
-                ),
-                delete_after=5,
-            )
+            try:
+                await ctx.send(
+                    embed=discord.Embed(
+                        description=f"❌ Missing argument: `{error.param.name}`",
+                        color=0xC0392B,
+                    ),
+                    delete_after=5,
+                )
+            except discord.HTTPException:
+                pass
         else:
             log.error("Command error in %s: %s", ctx.command, error)
 

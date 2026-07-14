@@ -15,7 +15,7 @@ from collections import defaultdict
 import discord
 from discord.ext import commands
 
-from utils import db, embeds
+from utils import db, embeds, notifications
 from utils.bypass_db import is_bypassed
 
 log = logging.getLogger("guardian.antinuke")
@@ -224,6 +224,22 @@ class AntiNuke(commands.Cog):
                 )
                 await self._send_log(guild, embed)
 
+                # DM the rogue admin and alert the owner
+                await notifications.dm_warn_user(
+                    self.bot, user, guild.name,
+                    f"Rogue admin threshold exceeded: `{threshold}+` destructive actions in `{interval}s`"
+                )
+                await notifications.dm_owner_alert(
+                    self.bot,
+                    "⚠️  Rogue Admin Detected",
+                    (
+                        f"**Guild:** {guild.name} (`{guild.id}`)\n"
+                        f"**Rogue Admin:** {user.mention} (`{user.id}`) — {user}\n"
+                        f"**Trigger:** `{threshold}+` destructive actions in `{interval}s`\n"
+                        f"**Action:** All roles stripped"
+                    ),
+                )
+
     # ── Punish ────────────────────────────────────────────────────────────────
 
     async def _punish(
@@ -236,6 +252,21 @@ class AntiNuke(commands.Cog):
     ):
         action = cfg.get("action", "ban")
         full_reason = f"[Guardian] Anti-Nuke: {reason}"
+
+        # ── DM the offender: they have been warned ────────────────────────────
+        await notifications.dm_warn_user(self.bot, user, guild.name, reason)
+
+        # ── Alert every bot owner with event details ───────────────────────────
+        await notifications.dm_owner_alert(
+            self.bot,
+            "🛡️  Anti-Nuke — Security Action Taken",
+            (
+                f"**Guild:** {guild.name} (`{guild.id}`)\n"
+                f"**Perpetrator:** {user.mention} (`{user.id}`) — {user}\n"
+                f"**Action Applied:** `{action}`\n"
+                f"**Reason:** {reason}"
+            ),
+        )
 
         if member is None:
             if action == "ban":

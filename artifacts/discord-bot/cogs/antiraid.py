@@ -14,7 +14,7 @@ from collections import defaultdict
 import discord
 from discord.ext import commands
 
-from utils import db, embeds
+from utils import db, embeds, notifications
 
 log = logging.getLogger("guardian.antiraid")
 
@@ -37,6 +37,21 @@ class AntiRaid(commands.Cog):
             min_age = alt_cfg.get("minAccountAge", 7)
             if age_days < min_age:
                 alt_action = alt_cfg.get("action", "kick")
+                # Warn the account and alert owner before removal
+                await notifications.dm_warn_user(
+                    self.bot, member, guild.name,
+                    f"Account too new (age: {age_days}d, minimum: {min_age}d) — alt-account protection triggered"
+                )
+                await notifications.dm_owner_alert(
+                    self.bot,
+                    "🔍  Alt Account Removed",
+                    (
+                        f"**Guild:** {guild.name} (`{guild.id}`)\n"
+                        f"**Member:** {member.mention} (`{member.id}`) — {member}\n"
+                        f"**Account Age:** `{age_days}d` (minimum: `{min_age}d`)\n"
+                        f"**Action:** `{alt_action}`"
+                    ),
+                )
                 try:
                     if alt_action == "ban":
                         await member.ban(reason=f"[Guardian] Alt account (age: {age_days}d < {min_age}d)")
@@ -78,6 +93,11 @@ class AntiRaid(commands.Cog):
                     continue
                 m = guild.get_member(uid)
                 if m:
+                    # Warn the raider before removal
+                    await notifications.dm_warn_user(
+                        self.bot, m, guild.name,
+                        f"You joined during a detected raid ({len(raiders)} joins in {interval}s) and have been actioned"
+                    )
                     try:
                         if action == "ban":
                             await guild.ban(m, reason="[Guardian] Anti-Raid")
@@ -88,6 +108,18 @@ class AntiRaid(commands.Cog):
                         pass
 
             await self._send_raid_log(guild, len(raiders), interval, punished)
+
+            # Alert the bot owner about the raid
+            await notifications.dm_owner_alert(
+                self.bot,
+                "🚨  Raid Detected — Lockdown Active",
+                (
+                    f"**Guild:** {guild.name} (`{guild.id}`)\n"
+                    f"**Joins:** `{len(raiders)}` within `{interval}s`\n"
+                    f"**Punished:** `{punished}` raiders\n"
+                    f"**Action:** `{action}` · Server locked for 5 minutes"
+                ),
+            )
 
             await asyncio.sleep(300)
             if self._lockdown_active.get(guild.id):
