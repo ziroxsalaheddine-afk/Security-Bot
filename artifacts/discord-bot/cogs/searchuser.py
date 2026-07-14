@@ -3,11 +3,16 @@ Search User Cog
 ───────────────
 +searchuser [length]  —  Find available Discord usernames of the given length.
 
-• Length range: 3–15 (default 5)
-• Routes requests through a proxy pool to bypass Replit datacenter blocks
-• Proxy priority: PROXY_URL env-var → proxyscrape free list → direct (last resort)
-• Up to 3 proxy retries per username attempt before skipping that name
-• "Rate limited" flag only fires on genuine Discord 429 through a working proxy
+Attempt-counting rules:
+  • Only a Discord 200 OK (taken: true/false) counts as one of the 15 attempts.
+  • 403 / 429 / timeout / connection error → discard proxy, pick a new one,
+    retry the SAME username immediately. Attempt counter does NOT advance.
+  • After 10 consecutive proxy failures with no 200 OK, the search stops.
+
+Proxy priority:
+  1. PROXY_URL env-var (always tried first; never permanently evicted)
+  2. Merged pool from three public sources (GitHub × 2 + proxyscrape), shuffled
+  3. Direct connection — last resort when pool is fully dead
 """
 
 import asyncio
@@ -23,15 +28,22 @@ from discord.ext import commands
 
 log = logging.getLogger("guardian.searchuser")
 
+# ── Constants ──────────────────────────────────────────────────────────────────
+
 COL_LAVENDER = 0xC8B6FF
-FOOTER = "© 2026 — developed by zrx.gg"
+FOOTER       = "© 2026 — developed by zrx.gg"
 
 DISCORD_API_URL = "https://discord.com/api/v9/unique-username/username-attempt-unauthed"
-PROXYSCRAPE_URL = (
-    "https://api.proxyscrape.com/v2/"
-    "?request=displayproxies&protocol=http&timeout=2000"
-    "&country=all&ssl=yes&anonymity=anonymous"
-)
+
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    (
+        "https://api.proxyscrape.com/v2/"
+        "?request=displayproxies&protocol=http&timeout=2000"
+        "&country=all&ssl=yes&anonymity=anonymous"
+    ),
+]
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -43,29 +55,23 @@ _BROWSER_HEADERS = {
     "Accept": "application/json",
 }
 
-MAX_ATTEMPTS      = 15   # hard ceiling on username checks per command run
-TARGET_FOUND      = 5    # stop early once this many available names are found
-PROXY_RETRIES     = 3    # how many different proxies to try per username before giving up
-PROXY_TIMEOUT     = 8    # seconds to wait for a single proxied request
-FETCH_TIMEOUT     = 10   # seconds to wait when fetching the proxy list
-INTER_REQUEST_GAP = 0.2  # seconds between successful requests
+MAX_ATTEMPTS            = 15   # only 200 OK responses count toward this
+TARGET_FOUND            = 5    # stop early once this many available names found
+MAX_CONSECUTIVE_FAILS   = 10   # bail if this many proxies in a row all fail
+PROXY_REQUEST_TIMEOUT   = 8    # seconds per proxied Discord request
+SOURCE_FETCH_TIMEOUT    = 12   # seconds to fetch one proxy-list source
+INTER_ATTEMPT_GAP       = 0.15 # seconds between attempts (after a 200 OK)
 
 # Characters valid anywhere in a Discord username
 _ALL_CHARS  = string.ascii_lowercase + string.digits + "_."
-# Safe for position 0 or -1 (period not allowed at edges)
+# Safe for first/last position (period not allowed at edges)
 _SAFE_CHARS = string.ascii_lowercase + string.digits + "_"
 
 
 # ── Username generator ─────────────────────────────────────────────────────────
 
 def _gen_username(length: int) -> str:
-    """Generate a random Discord-valid username of *length* characters.
-
-    Rules enforced:
-      • a-z, 0-9, _, . only
-      • First and last character cannot be a period
-      • No two consecutive periods (..)
-    """
+    """Generate a random Discord-valid username of *length* characters."""
     while True:
         chars: list[str] = []
         for i in range(length):
@@ -76,59 +82,67 @@ def _gen_username(length: int) -> str:
             return name
 
 
-# ── Proxy pool ─────────────────────────────────────────────────────────────────
+# ── Proxy fetching ─────────────────────────────────────────────────────────────
 
-async def _fetch_proxy_list(session: aiohttp.ClientSession) -> list[str]:
-    """
-    Fetch a fresh list of HTTP proxies from proxyscrape.
-    Returns a shuffled list of 'http://ip:port' strings.
-    Falls back to an empty list if the fetch fails — callers handle that.
-    """
+async def _fetch_one_source(session: aiohttp.ClientSession, url: str) -> list[str]:
+    """Fetch one proxy-list source. Returns a list of 'http://ip:port' strings."""
     try:
         async with session.get(
-            PROXYSCRAPE_URL,
-            timeout=aiohttp.ClientTimeout(total=FETCH_TIMEOUT),
+            url, timeout=aiohttp.ClientTimeout(total=SOURCE_FETCH_TIMEOUT)
         ) as resp:
             if resp.status != 200:
-                log.warning("proxyscrape returned HTTP %d", resp.status)
+                log.debug("proxy source %s → HTTP %d", url, resp.status)
                 return []
             text = await resp.text()
-            proxies = []
+            results = []
             for line in text.splitlines():
                 line = line.strip()
-                if line and ":" in line:
-                    proxies.append(f"http://{line}")
-            random.shuffle(proxies)
-            log.info("searchuser: fetched %d proxies from proxyscrape", len(proxies))
-            return proxies
+                # Accept bare ip:port or lines that already start with http://
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("http://") or line.startswith("https://"):
+                    results.append(line)
+                elif ":" in line:
+                    results.append(f"http://{line}")
+            log.debug("proxy source %s → %d proxies", url, len(results))
+            return results
     except Exception as exc:
-        log.warning("searchuser: proxy list fetch failed: %s", exc)
+        log.debug("proxy source %s fetch failed: %s", url, exc)
         return []
 
 
+async def _build_proxy_pool(session: aiohttp.ClientSession) -> list[str]:
+    """
+    Fetch all proxy sources concurrently, merge, deduplicate, and shuffle.
+    Returns a flat list of 'http://ip:port' strings.
+    """
+    lists = await asyncio.gather(*[_fetch_one_source(session, u) for u in PROXY_SOURCES])
+    merged = list({p for sublist in lists for p in sublist})  # deduplicate via set
+    random.shuffle(merged)
+    log.info("searchuser: proxy pool built — %d unique proxies from %d sources",
+             len(merged), len(PROXY_SOURCES))
+    return merged
+
+
+# ── Proxy pool with round-robin + dead-proxy eviction ─────────────────────────
+
 class _ProxyPool:
     """
-    Round-robin proxy pool with dead-proxy eviction.
-
-    Priority order:
-      1. PROXY_URL environment variable (always tried first if set)
-      2. Proxies fetched from proxyscrape
-      3. None (direct connection — last resort, likely blocked)
+    Tracks live proxies, evicts dead ones, round-robins through the rest.
+    The PROXY_URL env proxy is always tried first and only evicted temporarily
+    when it fails (it re-enters on the next command invocation).
     """
 
     def __init__(self, env_proxy: str | None, fetched: list[str]) -> None:
-        self._env_proxy = env_proxy
-        self._pool = list(fetched)
-        self._dead: set[str] = set()
-        self._idx = 0
+        self._env    = env_proxy
+        self._pool   = list(fetched)
+        self._dead:  set[str] = set()
+        self._idx    = 0
 
     def next(self) -> str | None:
         """Return the next candidate proxy URL, or None for a direct request."""
-        # Always try the env proxy first (it never gets permanently evicted)
-        if self._env_proxy and self._env_proxy not in self._dead:
-            return self._env_proxy
-
-        # Round-robin through the fetched pool, skipping dead ones
+        if self._env and self._env not in self._dead:
+            return self._env
         alive = [p for p in self._pool if p not in self._dead]
         if not alive:
             return None  # direct connection
@@ -141,66 +155,68 @@ class _ProxyPool:
             self._dead.add(proxy)
 
     @property
-    def any_alive(self) -> bool:
-        alive_fetched = any(p for p in self._pool if p not in self._dead)
-        env_alive = bool(self._env_proxy and self._env_proxy not in self._dead)
-        return env_alive or alive_fetched
+    def has_live(self) -> bool:
+        env_live     = bool(self._env and self._env not in self._dead)
+        fetched_live = any(p for p in self._pool if p not in self._dead)
+        return env_live or fetched_live
+
+    @property
+    def total(self) -> int:
+        return (1 if self._env else 0) + len(self._pool)
 
 
-# ── Single check ──────────────────────────────────────────────────────────────
+# ── Single-request probe ───────────────────────────────────────────────────────
 
-class _CheckResult:
-    """Result of a single username availability probe."""
-    __slots__ = ("available", "taken", "rate_limited", "proxy_error")
+class _Probe:
+    """Outcome of one POST to the Discord username endpoint."""
+    __slots__ = ("ok", "available", "rate_limited", "bad_proxy")
 
-    def __init__(self, *, available=False, taken=False, rate_limited=False, proxy_error=False):
-        self.available    = available
-        self.taken        = taken
-        self.rate_limited = rate_limited
-        self.proxy_error  = proxy_error
+    def __init__(self, *, ok=False, available=False, rate_limited=False, bad_proxy=False):
+        self.ok           = ok           # got a 200 — counts as one attempt
+        self.available    = available    # taken: false
+        self.rate_limited = rate_limited # Discord returned 429 through a live proxy
+        self.bad_proxy    = bad_proxy    # 403 / 5xx / timeout / connection error
 
 
-async def _check_one(
+async def _probe(
     session: aiohttp.ClientSession,
     username: str,
     proxy: str | None,
-) -> _CheckResult:
-    """
-    POST one username check to the Discord API, optionally through *proxy*.
-    Returns a _CheckResult; never raises.
-    """
+) -> _Probe:
+    """POST one username check; never raises."""
     try:
-        kwargs: dict = dict(
+        kw: dict = dict(
             json={"username": username},
             headers=_BROWSER_HEADERS,
-            timeout=aiohttp.ClientTimeout(total=PROXY_TIMEOUT),
+            timeout=aiohttp.ClientTimeout(total=PROXY_REQUEST_TIMEOUT),
         )
         if proxy:
-            kwargs["proxy"] = proxy
+            kw["proxy"] = proxy
 
-        async with session.post(DISCORD_API_URL, **kwargs) as resp:
+        async with session.post(DISCORD_API_URL, **kw) as resp:
             if resp.status == 200:
-                data = await resp.json()
+                data  = await resp.json()
                 taken = data.get("taken", True)
-                return _CheckResult(available=not taken, taken=taken)
-
+                return _Probe(ok=True, available=not taken)
             if resp.status == 429:
-                log.warning("searchuser: Discord 429 via proxy=%s", proxy)
-                return _CheckResult(rate_limited=True)
-
-            # 403, 502, 503 etc. — proxy is likely blocked or broken
+                log.debug("searchuser: 429 via proxy=%s", proxy)
+                return _Probe(rate_limited=True)
+            # 403, 502, 503, etc. — proxy is blocked or broken
             log.debug("searchuser: HTTP %d via proxy=%s for %s", resp.status, proxy, username)
-            return _CheckResult(proxy_error=True)
+            return _Probe(bad_proxy=True)
 
-    except (aiohttp.ClientProxyConnectionError,
-            aiohttp.ClientConnectorError,
-            aiohttp.ServerConnectionError,
-            asyncio.TimeoutError) as exc:
-        log.debug("searchuser: proxy error (%s) proxy=%s: %s", type(exc).__name__, proxy, exc)
-        return _CheckResult(proxy_error=True)
+    except (
+        aiohttp.ClientProxyConnectionError,
+        aiohttp.ClientConnectorError,
+        aiohttp.ServerConnectionError,
+        asyncio.TimeoutError,
+        aiohttp.ClientOSError,
+    ) as exc:
+        log.debug("searchuser: proxy conn error (%s) proxy=%s", type(exc).__name__, proxy)
+        return _Probe(bad_proxy=True)
     except Exception as exc:
-        log.warning("searchuser: unexpected error proxy=%s: %s", proxy, exc)
-        return _CheckResult(proxy_error=True)
+        log.warning("searchuser: unexpected probe error proxy=%s: %s", proxy, exc)
+        return _Probe(bad_proxy=True)
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -213,7 +229,6 @@ class SearchUser(commands.Cog):
     async def searchuser(self, ctx: commands.Context, length: int = 5):
         """Find available Discord usernames of a given character length (3–15)."""
 
-        # ── Validate length ────────────────────────────────────────────────────
         if not 3 <= length <= 15:
             return await ctx.send(
                 embed=discord.Embed(
@@ -223,135 +238,144 @@ class SearchUser(commands.Cog):
                 delete_after=8,
             )
 
-        # ── Send placeholder ───────────────────────────────────────────────────
         msg = await ctx.send(
             embed=discord.Embed(
                 title="Username Search Results",
-                description="🔍  Fetching proxies and searching — please wait...",
+                description="🔍  Loading proxies and searching — please wait...",
                 color=COL_LAVENDER,
             )
         )
 
-        # ── Build proxy pool ───────────────────────────────────────────────────
-        env_proxy = os.environ.get("PROXY_URL") or None  # e.g. http://user:pass@ip:port
+        env_proxy = os.environ.get("PROXY_URL") or None
 
-        available:      list[str] = []
-        attempts:       int       = 0
-        rate_limited:   bool      = False
-        all_proxies_dead: bool    = False
+        available:           list[str] = []
+        attempts:            int       = 0   # only counts 200 OK responses
+        consecutive_fails:   int       = 0
+        stopped_rate_limited: bool     = False
+        stopped_no_proxies:   bool     = False
 
         async with aiohttp.ClientSession() as session:
-            fetched_proxies = await _fetch_proxy_list(session)
-            pool = _ProxyPool(env_proxy, fetched_proxies)
+            fetched = await _build_proxy_pool(session)
+            pool    = _ProxyPool(env_proxy, fetched)
 
-            # ── Main search loop ───────────────────────────────────────────────
             while len(available) < TARGET_FOUND and attempts < MAX_ATTEMPTS:
                 username = _gen_username(length)
-                attempts += 1
 
-                # Try up to PROXY_RETRIES different proxies for this username
-                succeeded = False
-                for _retry in range(PROXY_RETRIES):
-                    proxy = pool.next()
+                # ── Inner loop: keep trying proxies until we get a 200 OK ──────
+                while True:
+                    proxy  = pool.next()
+                    result = await _probe(session, username, proxy)
 
-                    result = await _check_one(session, username, proxy)
+                    if result.ok:
+                        # ✅ Real Discord response — counts as one attempt
+                        attempts          += 1
+                        consecutive_fails  = 0
+                        if result.available:
+                            available.append(username)
+                        break  # move to next username
 
                     if result.rate_limited:
-                        rate_limited = True
-                        break  # genuine 429 — stop everything
-
-                    if result.proxy_error:
+                        # Discord is actually rate-limiting us through a live proxy
+                        consecutive_fails += 1
                         pool.mark_dead(proxy)
-                        if not pool.any_alive:
-                            # Fall back to direct for remaining attempts
-                            direct = await _check_one(session, username, None)
-                            if direct.rate_limited:
-                                rate_limited = True
-                            elif direct.available:
+                        if consecutive_fails >= MAX_CONSECUTIVE_FAILS:
+                            stopped_rate_limited = True
+                            break
+                        # Try another proxy for the same username
+                        continue
+
+                    # bad_proxy: 403 / 5xx / timeout
+                    pool.mark_dead(proxy)
+                    consecutive_fails += 1
+
+                    if consecutive_fails >= MAX_CONSECUTIVE_FAILS:
+                        stopped_no_proxies = True
+                        break
+
+                    if not pool.has_live:
+                        # No proxies left at all — one last direct attempt
+                        direct = await _probe(session, username, None)
+                        if direct.ok:
+                            attempts          += 1
+                            consecutive_fails  = 0
+                            if direct.available:
                                 available.append(username)
-                            # Whether direct worked or not, move to next username
-                            succeeded = True
-                        continue  # try next proxy
+                        else:
+                            stopped_no_proxies = True
+                        break
 
-                    # Proxy worked — record result
-                    if result.available:
-                        available.append(username)
-                    succeeded = True
-                    break  # done with this username
-
-                if rate_limited:
-                    break
-
-                if not succeeded and not pool.any_alive:
-                    all_proxies_dead = True
+                # ── Check outer-loop exit conditions ──────────────────────────
+                if stopped_rate_limited or stopped_no_proxies:
                     break
 
                 if attempts < MAX_ATTEMPTS and len(available) < TARGET_FOUND:
-                    await asyncio.sleep(INTER_REQUEST_GAP)
+                    await asyncio.sleep(INTER_ATTEMPT_GAP)
 
         # ── Build result embed ─────────────────────────────────────────────────
-        result_embed = discord.Embed(
+        embed = discord.Embed(
             title="Username Search Results",
             color=COL_LAVENDER,
             timestamp=datetime.now(timezone.utc),
         )
-        result_embed.add_field(name="Length Searched", value=f"`{length}` characters", inline=True)
-        result_embed.add_field(name="Attempts Made",   value=f"`{attempts}` / `{MAX_ATTEMPTS}`", inline=True)
-        result_embed.add_field(name="\u200b",          value="\u200b", inline=True)
+        embed.add_field(name="Length Searched",   value=f"`{length}` characters",         inline=True)
+        embed.add_field(name="Valid Attempts",     value=f"`{attempts}` / `{MAX_ATTEMPTS}`", inline=True)
+        embed.add_field(name="Proxies in Pool",    value=f"`{pool.total}`",                inline=True)
 
-        proxy_source = (
-            "custom (`PROXY_URL`)" if env_proxy
-            else f"{len(fetched_proxies)} from proxyscrape" if fetched_proxies
-            else "none — direct connection"
+        proxy_src = (
+            f"custom `PROXY_URL` + {len(fetched)} fetched" if env_proxy
+            else f"{len(fetched)} from {len(PROXY_SOURCES)} sources" if fetched
+            else "none available — direct connection"
         )
-        result_embed.add_field(name="Proxy Source", value=proxy_source, inline=False)
+        embed.add_field(name="Proxy Source", value=proxy_src, inline=False)
 
-        if rate_limited:
-            result_embed.add_field(
+        if stopped_rate_limited:
+            embed.add_field(
                 name="⚠️  Rate Limited by Discord",
                 value=(
-                    "Discord returned a `429` even through the proxy. "
-                    "Wait a few minutes before trying again."
+                    f"`{MAX_CONSECUTIVE_FAILS}` proxies in a row received `429`. "
+                    "Discord is actively rate-limiting. Wait a few minutes and try again, "
+                    "or set a `PROXY_URL` secret with a premium/residential proxy."
                 ),
                 inline=False,
             )
-        elif all_proxies_dead:
-            result_embed.add_field(
-                name="⚠️  All Proxies Exhausted",
+        elif stopped_no_proxies:
+            embed.add_field(
+                name="⚠️  Proxy Pool Exhausted",
                 value=(
-                    "Every proxy in the pool was blocked or timed out. "
-                    "Set a `PROXY_URL` secret with a reliable proxy, or try again later."
+                    f"`{MAX_CONSECUTIVE_FAILS}` consecutive proxy failures — "
+                    "all fetched proxies are blocked or unreachable from this host. "
+                    "Set a `PROXY_URL` secret with a reliable private proxy and try again."
                 ),
                 inline=False,
             )
 
         if available:
-            result_embed.add_field(
+            embed.add_field(
                 name=f"✅  Available Usernames — {len(available)} found",
                 value="\n".join(f"• `{n}`" for n in available),
                 inline=False,
             )
         else:
-            result_embed.add_field(
+            embed.add_field(
                 name="❌  No Available Usernames Found",
                 value=(
-                    "None were found within the attempt limit.\n"
+                    "None confirmed available within the attempt limit.\n"
                     "Try again or use a **larger length** — `5` or `6` is recommended."
                 ),
                 inline=False,
             )
 
-        result_embed.set_footer(
+        embed.set_footer(
             text=(
-                "Note: 3-4 character usernames are highly competitive and mostly taken. "
+                "Note: 3-4 char usernames are highly competitive. "
                 "Set PROXY_URL for a reliable private proxy."
             )
         )
 
         try:
-            await msg.edit(embed=result_embed)
+            await msg.edit(embed=embed)
         except discord.HTTPException:
-            await ctx.send(embed=result_embed)
+            await ctx.send(embed=embed)
 
     @searchuser.error
     async def _searchuser_error(self, ctx: commands.Context, error):
