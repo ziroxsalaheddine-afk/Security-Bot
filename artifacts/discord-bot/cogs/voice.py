@@ -98,7 +98,10 @@ class Voice(commands.Cog):
                     delete_after=8,
                 )
 
-        log.info("Joined VC '%s' in guild '%s'", target.name, ctx.guild.name)
+        # Mark this player as 24/7 — prevents music cog idle-disconnect handlers
+        # from kicking us out when no music is playing.
+        vc._stay = True
+        log.info("Joined VC '%s' in guild '%s' (24/7 mode)", target.name, ctx.guild.name)
         await ctx.send(
             embed=_embed(
                 f"• __**Voice Connected**__\n"

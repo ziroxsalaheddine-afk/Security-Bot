@@ -311,11 +311,12 @@ class Music(commands.Cog):
             return
 
         # partial mode: wavelink plays from queue automatically.
-        # When the queue is empty, the player goes idle — schedule a disconnect.
-        if player.queue.is_empty:
+        # When the queue is empty, the player goes idle — schedule a disconnect
+        # unless the guild is in 24/7 mode (joined via +join).
+        if player.queue.is_empty and not getattr(player, "_stay", False):
             await asyncio.sleep(IDLE_TIMEOUT)
             # Re-check: a new track may have been queued in the meantime
-            if not player.playing:
+            if not player.playing and not getattr(player, "_stay", False):
                 try:
                     await player.disconnect()
                     if player.guild:
@@ -326,7 +327,11 @@ class Music(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_inactive_player(self, player: wavelink.Player):
-        """Fallback disconnect for players that go idle."""
+        """Fallback disconnect for players that go idle.
+        Skipped when the player was joined via +join (24/7 mode, _stay=True)."""
+        if getattr(player, "_stay", False):
+            log.debug("on_wavelink_inactive_player: skipping — guild %s is in 24/7 mode", player.guild)
+            return
         try:
             await player.disconnect()
             if player.guild:
