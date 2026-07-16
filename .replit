@@ -62,9 +62,9 @@ packages = ["libsodium"]
 [userenv]
 
 [userenv.shared]
-PORT = "5000"
-LAVALINK_PASSWORD = "https://seretia.link/discord"
-LAVALINK_URI = "https://lavalinkv4.serenetia.com"
+PORT = "433"
+LAVALINK_PASSWORD = "nyxbot.app/support"
+LAVALINK_URI = "http://sg2-nodelink.nyxbot.app:3000"
 
 [[ports]]
 localPort = 5000

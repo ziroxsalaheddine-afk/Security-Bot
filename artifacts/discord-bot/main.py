@@ -32,8 +32,10 @@ intents.voice_states    = True     # Required for all voice/music operations
 # secure=false → plain HTTP (port 3000); switch to https:// + 443 if the
 # host ever enables TLS.
 FALLBACK_LAVALINK_NODES: list[tuple[str, str]] = [
-    # Amane & AjieDev — serenetia (SSL)
-    ("https://lavalinkv4.serenetia.com:443", "https://seretia.link/discord"),
+    # Jirayu (SSL)
+    ("https://lavalink.jirayu.net:443", "youshallnotpass"),
+    # AneFaiz / Millohost (SSL)
+    ("https://lava-v4.millohost.my.id:443", "https://discord.gg/mjS5J2K3ep"),
 ]
 
 
