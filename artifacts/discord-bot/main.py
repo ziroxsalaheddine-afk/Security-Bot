@@ -79,61 +79,94 @@ class Guardian(commands.Bot):
                 log.error("Failed to load cog %s: %s", cog, e)
 
         # ── Connect Lavalink v4 node(s) (wavelink 3.x) in the background ─────
-        # wavelink's internal websocket connect loop retries forever and
-        # never raises if a node is unreachable. Awaiting it directly here
-        # would hang setup_hook — and therefore the whole bot, since it
-        # can't reach the Discord gateway until this coroutine returns. By
-        # firing it off as a background task instead of awaiting it, the
-        # bot always finishes startup and logs into Discord immediately,
-        # regardless of whether any Lavalink node is reachable. Music simply
-        # comes online whenever a node connects (or stays disabled if none
-        # ever do).
+        # Each node gets its own independent task.
+        #
+        # Why: Pool.connect blocks the calling coroutine until the WebSocket
+        # handshake succeeds (with internal exponential-backoff retries).
+        # For an unreachable node that retry loop runs forever, so if we
+        # connect all nodes in one Pool.connect call the first unreachable
+        # node prevents every subsequent node from being attempted at all.
+        # By spawning a separate task per node, reachable FALLBACK nodes
+        # come online immediately even when MAIN is temporarily down.
+        #
+        # Do NOT wrap individual connects in asyncio.wait_for — cancelling
+        # Pool.connect mid-flight leaves the node's WebSocket running but
+        # Pool.__nodes empty, causing "No nodes assigned" errors at runtime.
         self.loop.create_task(self._connect_lavalink())
 
     async def _connect_lavalink(self):
+        # Ensure Discord is fully connected before touching wavelink internals.
+        await self.wait_until_ready()
+
         lava_uri  = os.environ.get("LAVALINK_URI")
         lava_pass = os.environ.get("LAVALINK_PASSWORD")
 
-        nodes: list[wavelink.Node] = []
+        nodes: list[tuple[str, wavelink.Node]] = []
+
         if lava_uri and lava_pass:
-            nodes.append(wavelink.Node(
+            print(f"[Lavalink] MAIN node → {lava_uri}")
+            log.info("Lavalink MAIN node configured: %s", lava_uri)
+            nodes.append(("MAIN", wavelink.Node(
                 identifier="MAIN",
                 uri=lava_uri,
                 password=lava_pass,
-            ))
+            )))
+        else:
+            print("[Lavalink] WARNING: LAVALINK_URI / LAVALINK_PASSWORD not set — no MAIN node.")
+            log.warning("LAVALINK_URI or LAVALINK_PASSWORD env var missing — no MAIN node.")
 
-        # Public Lavalink v4 nodes (free, community-hosted — see
-        # https://lavalink-list.darrennathanael.com for a maintained list).
-        # These rotate/die periodically; if music stops working, swap in
-        # fresh hosts from that list. Each entry needs a `https://` or
-        # `http://` scheme, a port, and its own password.
         for i, (uri, password) in enumerate(FALLBACK_LAVALINK_NODES, start=1):
-            nodes.append(wavelink.Node(
-                identifier=f"FALLBACK-{i}",
+            label = f"FALLBACK-{i}"
+            print(f"[Lavalink] {label} node → {uri}")
+            nodes.append((label, wavelink.Node(
+                identifier=label,
                 uri=uri,
                 password=password,
-            ))
+            )))
 
         if not nodes:
+            print("[Lavalink] No nodes configured — music commands disabled.")
             log.warning("No Lavalink nodes configured — music commands disabled.")
             return
 
+        print(f"[Lavalink] Spawning {len(nodes)} independent connection task(s)…")
+        for label, node in nodes:
+            asyncio.create_task(self._connect_single_node(label, node))
+
+    async def _connect_single_node(self, label: str, node: wavelink.Node):
+        """Connect a single Lavalink node in its own task.
+
+        Pool.connect blocks (with internal retries) until the WebSocket
+        handshake succeeds, so running each node here in isolation means
+        a temporarily unreachable node cannot block any other node.
+        """
+        print(f"[Lavalink] {label}: connecting…")
         try:
-            # Bound the connect attempt so a dead/misconfigured node can't
-            # spam retries forever in the background without ever giving up.
-            await asyncio.wait_for(
-                wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100),
-                timeout=15,
-            )
-            log.info("Connected to Lavalink — %d node(s) configured.", len(nodes))
-        except asyncio.TimeoutError:
-            log.warning(
-                "Timed out connecting to Lavalink node(s) after 15s — "
-                "music will come online once a node becomes reachable. "
-                "The bot itself is unaffected and remains online."
-            )
+            await wavelink.Pool.connect(nodes=[node], client=self, cache_capacity=100)
+            # on_wavelink_node_ready fires separately once the WS handshake
+            # completes; Pool.connect returning means the node is registered.
+            print(f"[Lavalink] {label}: registered in Pool — waiting for WS ready event.")
+            log.info("Lavalink %s registered in Pool.", label)
+        except wavelink.AuthorizationFailedException as exc:
+            print(f"[Lavalink] {label} ❌ auth failed — check password. ({exc})")
+            log.error("Lavalink %s auth failed: %s", label, exc)
+        except wavelink.NodeException as exc:
+            print(f"[Lavalink] {label} ❌ node error — is Lavalink v4 running? ({exc})")
+            log.error("Lavalink %s node error: %s", label, exc)
         except Exception as exc:
-            log.error("Failed to initialise Lavalink pool: %s", exc)
+            print(f"[Lavalink] {label} ❌ {type(exc).__name__}: {exc}")
+            log.error("Lavalink %s unexpected error: %s", label, exc)
+
+    async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
+        print(
+            f"[Lavalink] ✅ Node connected successfully! "
+            f"identifier='{payload.node.identifier}'  "
+            f"session='{payload.session_id}'  resumed={payload.resumed}"
+        )
+        log.info(
+            "Lavalink node '%s' ready (session: %s, resumed: %s)",
+            payload.node.identifier, payload.session_id, payload.resumed,
+        )
 
     async def on_ready(self):
         print()
