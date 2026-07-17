@@ -123,13 +123,28 @@ class Recovery(commands.Cog):
 
         # ── Determine which roles are safe to delete ──
         bot_top = ctx.guild.me.top_role.position if ctx.guild.me else 0
-        deletable = [
-            r for r in ctx.guild.roles
-            if not r.is_default()              # skip @everyone
-            and not r.managed                  # skip bot-integration roles
-            and not r.is_premium_subscriber()  # skip Nitro booster role explicitly
-            and r.position < bot_top           # skip roles at or above the bot's own role
-        ]
+        bot_role = ctx.guild.me.top_role if ctx.guild.me else None
+
+        print(f"[Debug] +deleteroles invoked in '{ctx.guild.name}' by {ctx.author}")
+        print(f"[Debug] Bot top role: '{bot_role.name if bot_role else 'None'}' at position {bot_top}")
+        print(f"[Debug] Total roles in guild: {len(ctx.guild.roles)}")
+
+        deletable = []
+        for r in ctx.guild.roles:
+            if r.is_default():
+                print(f"[Debug] Skipped '{r.name}': is @everyone")
+                continue
+            if r.managed:
+                print(f"[Debug] Skipped '{r.name}': is managed (bot/integration)")
+                continue
+            if r.is_premium_subscriber():
+                print(f"[Debug] Skipped '{r.name}': is premium subscriber (Nitro booster) role")
+                continue
+            if r.position >= bot_top:
+                print(f"[Debug] Skipped '{r.name}': bot's top role ({bot_top}) is lower than or equal to role position ({r.position})")
+                continue
+            print(f"[Debug] Queued  '{r.name}': position {r.position} — will be deleted")
+            deletable.append(r)
 
         if not deletable:
             await ctx.send(embed=_embed(

@@ -10,7 +10,7 @@
   "config": {
     "prefix": "+",
     "antinuke": {
-      "enabled": true,
+      "enabled": false,
       "threshold": 3,
       "interval": 5,
       "action": "quarantine"
