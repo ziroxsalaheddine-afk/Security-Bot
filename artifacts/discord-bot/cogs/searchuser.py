@@ -269,7 +269,11 @@ async def _probe_socks5(username: str, proxy: str, timeout: float) -> _Probe:
     try:
         connector = ProxyConnector.from_url(proxy, rdns=True, ssl=False)
         async with aiohttp.ClientSession(
-            connector=connector, headers=_BROWSER_HEADERS
+            connector=connector, headers=_BROWSER_HEADERS,
+            # trust_env=False: never inherit system/env proxy settings.
+            # This session routes ONLY through the explicit SOCKS5 connector
+            # above — it must never bleed into discord.py's own sessions.
+            trust_env=False,
         ) as sess:
             async with sess.post(
                 DISCORD_API_URL,
@@ -466,7 +470,12 @@ class SearchUser(commands.Cog):
         typing_task = asyncio.create_task(_typing_keepalive(ctx.channel, stop_event))
 
         try:
-            async with aiohttp.ClientSession() as session:
+            # trust_env=False: this session fetches proxy lists and probes
+            # usernames through explicit per-request proxy= kwargs only.
+            # It must NEVER inherit a system/env proxy — doing so would route
+            # discord.py send-message calls through the proxy and trigger
+            # Cloudflare JS-challenge 500 responses when results are posted.
+            async with aiohttp.ClientSession(trust_env=False) as session:
 
                 if private_mode:
                     pool = _ProxyPool(env_proxy, [])
