@@ -39,13 +39,12 @@ args = "cd artifacts/discord-bot && python main.py"
 name = "Start application"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "pnpm --filter @workspace/api-server run dev"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [agent]
 stack = "BEST_EFFORT_FALLBACK"
