@@ -272,12 +272,25 @@ async def _do_backup(guild: discord.Guild, progress_msg: discord.Message) -> dic
 
 # ── Wipe helpers ───────────────────────────────────────────────────────────────
 
-async def _wipe_channels(guild: discord.Guild, progress_msg: discord.Message) -> None:
-    """Delete all channels (non-categories first, then categories)."""
+async def _wipe_channels(
+    guild: discord.Guild,
+    progress_msg: discord.Message,
+    invoke_channel_id: int,
+) -> None:
+    """Delete all channels (non-categories first, then categories).
+
+    The channel that holds ``progress_msg`` (invoke_channel_id) is always
+    skipped so the bot can continue sending progress updates.  The user is
+    responsible for deleting that leftover channel manually afterward.
+    """
     await progress_msg.edit(embed=_embed(
-        "• __**Wiping Channels**__\nDeleting existing channels before restoration…"
+        "• __**Wiping Channels**__\nDeleting existing channels before restoration…\n"
+        "*The command channel is kept alive so progress updates can continue.*"
     ))
-    non_cats = [c for c in guild.channels if not isinstance(c, discord.CategoryChannel)]
+    non_cats = [
+        c for c in guild.channels
+        if not isinstance(c, discord.CategoryChannel) and c.id != invoke_channel_id
+    ]
     for ch in non_cats:
         try:
             await ch.delete(reason="Guardian backup wipe")
@@ -330,8 +343,21 @@ async def _restore_roles(
     role_map: dict,
     progress_msg: discord.Message,
 ) -> int:
+    """Create roles and then bulk-apply exact saved positions.
+
+    Discord places each newly created role just above @everyone (position 1).
+    To get the right final order we create roles from HIGHEST saved position
+    to LOWEST — so the last-created (lowest) role ends up at the bottom.
+    We then make one bulk edit_role_positions call to lock in the exact saved
+    integers, which is the only fully reliable way to match the original
+    hierarchy regardless of race conditions or bot-role ceiling limits.
+    """
     created = 0
-    for role_data in sorted(data.get("roles", []), key=lambda r: r["position"]):
+    # (new_role, saved_position) pairs used for the bulk position fix-up
+    position_targets: list[tuple[discord.Role, int]] = []
+
+    # Handle @everyone first (not created, just edited)
+    for role_data in data.get("roles", []):
         if role_data.get("is_default"):
             try:
                 await guild.default_role.edit(
@@ -340,7 +366,12 @@ async def _restore_roles(
             except (discord.Forbidden, discord.HTTPException):
                 pass
             role_map[role_data["id"]] = guild.default_role
-            continue
+
+    # Create non-default roles from highest saved position → lowest.
+    # This ensures that after creation the stack naturally trends toward
+    # the correct order before we apply the bulk fix-up.
+    non_default = [r for r in data.get("roles", []) if not r.get("is_default")]
+    for role_data in sorted(non_default, key=lambda r: r["position"], reverse=True):
         try:
             new_role = await guild.create_role(
                 name=role_data["name"],
@@ -351,10 +382,29 @@ async def _restore_roles(
                 reason="Guardian backup restore",
             )
             role_map[role_data["id"]] = new_role
+            position_targets.append((new_role, role_data["position"]))
             created += 1
             await asyncio.sleep(WRITE_SLEEP)
         except (discord.Forbidden, discord.HTTPException) as exc:
             log.warning("Could not create role '%s': %s", role_data["name"], exc)
+
+    # Bulk-apply exact saved positions so the hierarchy matches precisely.
+    # Clamp each position to stay below the bot's own top role to avoid
+    # a Forbidden error when the saved server had roles above the bot.
+    if position_targets:
+        bot_ceiling = (guild.me.top_role.position - 1) if guild.me else 999
+        positions: dict[discord.Role, int] = {}
+        for role, saved_pos in position_targets:
+            clamped = max(1, min(saved_pos, bot_ceiling))
+            positions[role] = clamped
+        try:
+            await guild.edit_role_positions(
+                positions=positions,
+                reason="Guardian backup restore — hierarchy fix",
+            )
+        except Exception as exc:
+            log.warning("Could not bulk-set role positions (roles still created): %s", exc)
+
     return created
 
 
@@ -468,12 +518,20 @@ class LoadView(discord.ui.View):
     Shown by +backup load <id> before any destructive action is taken.
     """
 
-    def __init__(self, author_id: int, guild: discord.Guild, data: dict, backup_id: str):
+    def __init__(
+        self,
+        author_id: int,
+        guild: discord.Guild,
+        data: dict,
+        backup_id: str,
+        invoke_channel_id: int,
+    ):
         super().__init__(timeout=60)
-        self.author_id = author_id
-        self.guild     = guild
-        self.data      = data
-        self.backup_id = backup_id
+        self.author_id         = author_id
+        self.guild             = guild
+        self.data              = data
+        self.backup_id         = backup_id
+        self.invoke_channel_id = invoke_channel_id  # never deleted during wipe
         self.message: Optional[discord.Message] = None
 
     # ── Interaction guard ──────────────────────────────────────────────────────
@@ -520,8 +578,8 @@ class LoadView(discord.ui.View):
         msg = interaction.message
 
         try:
-            # Step 1: Wipe channels
-            await _wipe_channels(self.guild, msg)
+            # Step 1: Wipe channels (skip the invoke channel so progress msgs keep working)
+            await _wipe_channels(self.guild, msg, self.invoke_channel_id)
             await msg.edit(embed=_embed(
                 "• __**Loading Everything**__\n\n"
                 "`✅` Channels wiped\n"
@@ -626,7 +684,7 @@ class LoadView(discord.ui.View):
         )
         msg = interaction.message
         try:
-            await _wipe_channels(self.guild, msg)
+            await _wipe_channels(self.guild, msg, self.invoke_channel_id)
             await msg.edit(embed=_embed(
                 "• __**Loading Channels**__\n`✅` Channels wiped\n"
                 "`⏳` Creating categories…"
@@ -962,6 +1020,7 @@ class Backup(commands.Cog):
             guild=ctx.guild,
             data=data,
             backup_id=backup_id,
+            invoke_channel_id=ctx.channel.id,
         )
         view.message = await ctx.send(embed=e, view=view)
 
