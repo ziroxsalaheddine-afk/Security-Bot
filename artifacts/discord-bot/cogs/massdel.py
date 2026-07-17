@@ -108,7 +108,7 @@ class _ConfirmView(discord.ui.View):
 
 # ── Cog ────────────────────────────────────────────────────────────────────────
 
-class MassDel(commands.Cog):
+class Recovery(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
@@ -366,4 +366,4 @@ class MassDel(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(MassDel(bot))
+    await bot.add_cog(Recovery(bot))

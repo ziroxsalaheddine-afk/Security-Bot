@@ -120,15 +120,9 @@ CATEGORIES: dict[str, dict] = {
             ("+backup delete <id>",           "Permanently deletes a saved backup by its Backup ID."),
             ("+restore [guild_id]",           "(Legacy) Replays a guild-id-based snapshot into the current server without wiping first."),
             ("+cloneroles <source_guild_id>", "Copies all roles from another server's legacy backup into this server, sorted by exact hierarchical position."),
-        ],
-    },
-    "Utility": {
-        "emoji": "🗑️",
-        "tagline": "Mass-deletion tools — wipe roles, channels, or emojis in one command.",
-        "commands": [
-            ("+deleteroles",    "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
-            ("+deletechannels", "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
-            ("+deleteemojis",   "Deletes all custom emojis in the server. Requires Administrator permission."),
+            ("+deleteroles",                  "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
+            ("+deletechannels",               "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
+            ("+deleteemojis",                 "Deletes all custom emojis in the server. Requires Administrator permission."),
         ],
     },
     "Information": {
