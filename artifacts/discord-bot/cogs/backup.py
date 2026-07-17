@@ -479,7 +479,9 @@ async def _restore_categories(guild: discord.Guild, data: dict,
         ow = _build_overwrites(cd["overwrites"], role_map, guild)
         try:
             cat = await guild.create_category(
-                name=cd["name"], overwrites=ow, reason="Guardian backup restore")
+                name=cd["name"], overwrites=ow,
+                position=cd.get("position", 0),
+                reason="Guardian backup restore")
             return (cd["id"], cat)
         except Exception as exc:
             log.warning("Could not create category '%s': %s", cd["name"], exc)
@@ -506,11 +508,13 @@ async def _restore_channels(guild: discord.Guild, data: dict,
         cat = cat_map.get(cd.get("category_id"))
         ch_type = cd.get("type", "text")
         try:
+            pos = cd.get("position", 0)
             if "text" in ch_type or "forum" in ch_type:
                 await guild.create_text_channel(
                     name=cd["name"], category=cat, overwrites=ow,
                     topic=cd.get("topic") or "", nsfw=cd.get("nsfw", False),
                     slowmode_delay=cd.get("slowmode", 0),
+                    position=pos,
                     reason="Guardian backup restore",
                 )
             elif "voice" in ch_type:
@@ -518,16 +522,19 @@ async def _restore_channels(guild: discord.Guild, data: dict,
                     name=cd["name"], category=cat, overwrites=ow,
                     bitrate=min(cd.get("bitrate", 64000), guild.bitrate_limit),
                     user_limit=cd.get("user_limit", 0),
+                    position=pos,
                     reason="Guardian backup restore",
                 )
             elif "stage" in ch_type:
                 await guild.create_stage_channel(
                     name=cd["name"], category=cat, overwrites=ow,
+                    position=pos,
                     reason="Guardian backup restore",
                 )
             else:
                 await guild.create_text_channel(
                     name=cd["name"], category=cat, overwrites=ow,
+                    position=pos,
                     reason="Guardian backup restore",
                 )
             return True

@@ -125,9 +125,10 @@ class MassDel(commands.Cog):
         bot_top = ctx.guild.me.top_role.position if ctx.guild.me else 0
         deletable = [
             r for r in ctx.guild.roles
-            if not r.is_default()        # skip @everyone
-            and not r.managed            # skip Nitro boosts / bot-integration roles
-            and r.position < bot_top     # skip roles at or above the bot's own role
+            if not r.is_default()              # skip @everyone
+            and not r.managed                  # skip bot-integration roles
+            and not r.is_premium_subscriber()  # skip Nitro booster role explicitly
+            and r.position < bot_top           # skip roles at or above the bot's own role
         ]
 
         if not deletable:
