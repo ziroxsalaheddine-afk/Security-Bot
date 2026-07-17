@@ -213,7 +213,7 @@ class CategorySelect(discord.ui.Select):
         sel = self.values[0]
         v.current_category = None if sel == "__home__" else sel
         v.current_page = 0
-        v._refresh()
+        v._update_buttons()
         await interaction.response.edit_message(embed=v._embed(), view=v)
 
 
@@ -229,7 +229,7 @@ class PrevButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         v: HelpView = self.view  # type: ignore[assignment]
         v.current_page = max(0, v.current_page - 1)
-        v._refresh()
+        v._update_buttons()
         await interaction.response.edit_message(embed=v._embed(), view=v)
 
 
@@ -259,7 +259,7 @@ class NextButton(discord.ui.Button):
         v: HelpView = self.view  # type: ignore[assignment]
         tp = v._total_pages()
         v.current_page = min(tp - 1, v.current_page + 1)
-        v._refresh()
+        v._update_buttons()
         await interaction.response.edit_message(embed=v._embed(), view=v)
 
 
@@ -279,7 +279,7 @@ class HelpView(discord.ui.View):
         for item in (self._select, self._prev, self._label, self._next):
             self.add_item(item)
 
-        self._refresh()
+        self._update_buttons()
 
     def _total_pages(self) -> int:
         if self.current_category is None:
@@ -287,7 +287,11 @@ class HelpView(discord.ui.View):
         cmds = CATEGORIES[self.current_category]["commands"]
         return max(1, (len(cmds) + PAGE_SIZE - 1) // PAGE_SIZE)
 
-    def _refresh(self):
+    def _update_buttons(self):
+        # NOTE: deliberately NOT named _refresh — discord.py's View base class
+        # has an internal _refresh(components) method.  Shadowing it with a
+        # zero-argument override causes a TypeError on every MESSAGE_UPDATE
+        # event and crashes the entire bot process.
         tp      = self._total_pages()
         on_home = self.current_category is None
         self._prev.disabled  = on_home or self.current_page <= 0

@@ -2,6 +2,7 @@ import os
 import pkgutil
 import asyncio
 import logging
+import traceback
 
 import discord
 import wavelink
@@ -68,6 +69,13 @@ class Guardian(commands.Bot):
         )
 
     async def setup_hook(self):
+        # Install the global asyncio exception handler now that the event loop
+        # is running.  This is the Python equivalent of Node.js
+        # process.on('unhandledRejection') — every background task that raises
+        # without a done-callback will be caught and logged here instead of
+        # silently crashing or taking down the process.
+        self.loop.set_exception_handler(_asyncio_exception_handler)
+
         alias_db.init()
         self.add_check(gatekeeper.check_or_raise)
 
@@ -168,6 +176,17 @@ class Guardian(commands.Bot):
             payload.node.identifier, payload.session_id, payload.resumed,
         )
 
+    async def on_error(self, event_method: str, *args, **kwargs):
+        """
+        Catches exceptions raised inside any event listener (on_message,
+        on_member_join, on_wavelink_*, etc.) that are NOT command errors.
+        Without this, a bug in any event handler propagates up through the
+        discord.py gateway loop and can terminate the process.
+        """
+        tb = traceback.format_exc()
+        log.error("Unhandled exception in event '%s':\n%s", event_method, tb)
+        print(f"[ERROR] Unhandled exception in event '{event_method}':\n{tb}")
+
     async def on_ready(self):
         print()
         print("  ╔══════════════════════════════════════╗")
@@ -237,7 +256,25 @@ class Guardian(commands.Bot):
             except discord.HTTPException:
                 pass
         else:
-            log.error("Command error in %s: %s", ctx.command, error)
+            # Log full traceback so the real cause is visible in the console,
+            # then send a friendly reply — the bot must never go silent or die.
+            tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+            log.error("Unhandled command error in '%s':\n%s", ctx.command, tb)
+            print(f"[ERROR] Command '{ctx.command}' raised an unhandled exception:\n{tb}")
+            try:
+                await ctx.send(
+                    embed=discord.Embed(
+                        title="Something went wrong",
+                        description=(
+                            "An unexpected error occurred while running that command.\n"
+                            f"```{type(error).__name__}: {error}```"
+                        ),
+                        color=0xC0392B,
+                    ),
+                    delete_after=15,
+                )
+            except discord.HTTPException:
+                pass
 
 
 def _get_token() -> str:
@@ -247,6 +284,26 @@ def _get_token() -> str:
     file works unmodified in either environment.
     """
     return os.getenv("TOKEN") or os.getenv("DISCORD_TOKEN") or ""
+
+
+def _asyncio_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """
+    Global asyncio exception handler — Python's equivalent of Node.js
+    process.on('unhandledRejection').  Catches exceptions that escape
+    background tasks (create_task, ensure_future, etc.) without a
+    done-callback.  Without this, they are silently swallowed by asyncio
+    and only printed to stderr; with it, every unhandled task failure is
+    logged to the guardian logger AND printed to the console.
+    """
+    exc = context.get("exception")
+    msg = context.get("message", "(no message)")
+    if exc:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        log.error("Unhandled asyncio exception: %s\n%s", msg, tb)
+        print(f"[ERROR] Unhandled asyncio exception: {msg}\n{tb}")
+    else:
+        log.error("Asyncio error (no exception object): %s", msg)
+        print(f"[ERROR] Asyncio error: {msg}")
 
 
 bot = Guardian()
@@ -259,4 +316,19 @@ if __name__ == "__main__":
 
     db.get()
     keep_alive()
-    bot.run(token, log_handler=None)
+
+    # Harden the process: log every unhandled exception rather than crashing.
+    # bot.run() sets up its own asyncio event loop internally, so we patch the
+    # exception handler through the loop that discord.py exposes after startup.
+    # The asyncio handler below covers background task failures (wavelink
+    # reconnects, background cog tasks, etc.).  on_error / on_command_error
+    # (defined above) cover event-listener and command failures respectively.
+    try:
+        bot.run(token, log_handler=None)
+    except KeyboardInterrupt:
+        pass  # clean Ctrl-C — not a crash
+    except Exception as exc:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        log.critical("bot.run() terminated with an unhandled exception:\n%s", tb)
+        print(f"[CRITICAL] bot.run() crashed:\n{tb}")
+        raise SystemExit(1)
