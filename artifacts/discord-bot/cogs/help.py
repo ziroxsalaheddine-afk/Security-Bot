@@ -122,6 +122,15 @@ CATEGORIES: dict[str, dict] = {
             ("+cloneroles <source_guild_id>", "Copies all roles from another server's legacy backup into this server, sorted by exact hierarchical position."),
         ],
     },
+    "Utility": {
+        "emoji": "🗑️",
+        "tagline": "Mass-deletion tools — wipe roles, channels, or emojis in one command.",
+        "commands": [
+            ("+deleteroles",    "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
+            ("+deletechannels", "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
+            ("+deleteemojis",   "Deletes all custom emojis in the server. Requires Administrator permission."),
+        ],
+    },
     "Information": {
         "emoji": "<a:gh1y1nee:1458439134766039165>",
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
