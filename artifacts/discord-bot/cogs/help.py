@@ -123,8 +123,10 @@ CATEGORIES: dict[str, dict] = {
             ("+deleteroles",                  "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
             ("+deletechannels",               "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
             ("+deleteemojis",                 "Deletes all custom emojis in the server. Requires Administrator permission."),
-            ("+massrole <@role>",             "Assigns the specified role to every member in the server. Shows live progress and a final count of assigned/skipped members. Requires Administrator permission."),
-            ("+massroleusers <@role> <...>",  "Assigns a role to a specific list of members (mentions or IDs). Example: `+massroleusers @Role @User1 @User2`. Requires Administrator permission."),
+            ("+massrole <@role>",                        "Assigns the specified role to every member in the server. Shows live progress and a final count of assigned/skipped members. Requires Administrator permission."),
+            ("+massroleusers <@role> <...>",             "Assigns a role to a specific list of members (mentions or IDs). Example: `+massroleusers @Role @User1 @User2`. Requires Administrator permission."),
+            ("+massreactchannel <limit> <emoji...>",     "Adds one or more emoji reactions to the last <limit> messages in the current channel (max 100). Example: `+massreactchannel 10 👍 ❤️`. Requires Manage Messages."),
+            ("+massreactuser <@user> <limit> <emoji...>","Scans the last <limit> messages (max 500) and reacts to every message sent by the specified user. Example: `+massreactuser @User 100 🔥`. Requires Manage Messages."),
         ],
     },
     "Information": {

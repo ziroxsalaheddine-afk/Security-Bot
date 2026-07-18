@@ -448,7 +448,169 @@ class Recovery(commands.Cog):
             color=COL_OK if not skipped else COL_WARN,
         ))
 
+    # ── +massreactchannel ──────────────────────────────────────────────────────
+
+    @commands.command(name="massreactchannel")
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
+    @commands.cooldown(1, 30, commands.BucketType.guild)
+    async def massreactchannel(self, ctx: commands.Context,
+                               limit: int, *emojis: str) -> None:
+        """Add one or more emoji reactions to the last <limit> messages in this channel."""
+
+        if not emojis:
+            await ctx.send(embed=_embed(
+                "• __**Missing Emojis**__\n"
+                "Usage: `+massreactchannel <limit> <emoji1> [emoji2 …]`",
+                color=COL_WARN,
+            ))
+            return
+
+        limit = max(1, min(limit, 100))   # cap at 100 to stay reasonable
+
+        progress = await ctx.send(embed=_embed(
+            f"• __**Mass React — Starting**__\n\n"
+            f"Fetching last `{limit}` message(s) and adding "
+            f"`{len(emojis)}` reaction(s) each…\n"
+            f"*Please wait — reactions are rate-limited by Discord.*",
+            color=COL_WARN,
+        ))
+
+        messages = [m async for m in ctx.channel.history(limit=limit, before=progress)]
+
+        reacted  = 0
+        failed   = 0
+
+        for message in messages:
+            for emoji in emojis:
+                try:
+                    await message.add_reaction(emoji)
+                    reacted += 1
+                except (discord.HTTPException, discord.Forbidden) as exc:
+                    log.warning("Could not react with '%s' on msg %s: %s",
+                                emoji, message.id, exc)
+                    failed += 1
+                await asyncio.sleep(0.3)   # Discord reaction rate-limit buffer
+
+        await progress.edit(embed=_embed(
+            f"• __**Mass React — Complete**__\n\n"
+            f"Messages processed: **{len(messages)}** · "
+            f"Emojis per message: **{len(emojis)}**\n\n"
+            f"`✅` Reactions added: **{reacted}**\n"
+            + (f"`⚠️` Failed (unknown emoji / deleted message): **{failed}**\n" if failed else ""),
+            color=COL_OK if not failed else COL_WARN,
+        ))
+
+    # ── +massreactuser ─────────────────────────────────────────────────────────
+
+    @commands.command(name="massreactuser")
+    @commands.guild_only()
+    @commands.has_permissions(manage_messages=True)
+    @commands.cooldown(1, 30, commands.BucketType.guild)
+    async def massreactuser(self, ctx: commands.Context,
+                            target: discord.Member,
+                            limit: int, *emojis: str) -> None:
+        """Scan channel history up to <limit> and react to every message from <user>."""
+
+        if not emojis:
+            await ctx.send(embed=_embed(
+                "• __**Missing Emojis**__\n"
+                "Usage: `+massreactuser <@user> <limit> <emoji1> [emoji2 …]`",
+                color=COL_WARN,
+            ))
+            return
+
+        limit = max(1, min(limit, 500))   # allow deeper scans since we filter by author
+
+        progress = await ctx.send(embed=_embed(
+            f"• __**Mass React (by User) — Starting**__\n\n"
+            f"Scanning last `{limit}` message(s) for messages by "
+            f"**{target.display_name}** and adding `{len(emojis)}` reaction(s)…\n"
+            f"*Please wait — reactions are rate-limited by Discord.*",
+            color=COL_WARN,
+        ))
+
+        # Collect only messages sent by the target user
+        target_messages = [
+            m async for m in ctx.channel.history(limit=limit, before=progress)
+            if m.author.id == target.id
+        ]
+
+        if not target_messages:
+            await progress.edit(embed=_embed(
+                f"• __**No Messages Found**__\n\n"
+                f"No messages from **{target.display_name}** in the last `{limit}` message(s).",
+                color=COL_WARN,
+            ))
+            return
+
+        reacted = 0
+        failed  = 0
+
+        for message in target_messages:
+            for emoji in emojis:
+                try:
+                    await message.add_reaction(emoji)
+                    reacted += 1
+                except (discord.HTTPException, discord.Forbidden) as exc:
+                    log.warning("Could not react with '%s' on msg %s: %s",
+                                emoji, message.id, exc)
+                    failed += 1
+                await asyncio.sleep(0.3)   # Discord reaction rate-limit buffer
+
+        await progress.edit(embed=_embed(
+            f"• __**Mass React (by User) — Complete**__\n\n"
+            f"User: **{target.display_name}** · "
+            f"Messages found: **{len(target_messages)}** · "
+            f"Emojis per message: **{len(emojis)}**\n\n"
+            f"`✅` Reactions added: **{reacted}**\n"
+            + (f"`⚠️` Failed (unknown emoji / deleted message): **{failed}**\n" if failed else ""),
+            color=COL_OK if not failed else COL_WARN,
+        ))
+
     # ── Error handlers ─────────────────────────────────────────────────────────
+
+    @massreactchannel.error
+    async def _massreactchannel_error(self, ctx: commands.Context, error) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(embed=_embed(
+                "• __**Permission Denied**__\n"
+                "You need **Manage Messages** or **Administrator** to use this command.",
+                color=COL_ERR,
+            ), delete_after=10)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(embed=_embed(
+                f"• __**Cooldown**__\nTry again in `{error.retry_after:.0f}s`.",
+                color=COL_WARN,
+            ), delete_after=8)
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send(embed=_embed(
+                "• __**Bad Argument**__\n"
+                "Usage: `+massreactchannel <limit> <emoji1> [emoji2 …]`\n"
+                "`limit` must be a whole number.",
+                color=COL_ERR,
+            ), delete_after=10)
+
+    @massreactuser.error
+    async def _massreactuser_error(self, ctx: commands.Context, error) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(embed=_embed(
+                "• __**Permission Denied**__\n"
+                "You need **Manage Messages** or **Administrator** to use this command.",
+                color=COL_ERR,
+            ), delete_after=10)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(embed=_embed(
+                f"• __**Cooldown**__\nTry again in `{error.retry_after:.0f}s`.",
+                color=COL_WARN,
+            ), delete_after=8)
+        elif isinstance(error, commands.BadArgument) or isinstance(error, commands.MemberNotFound):
+            await ctx.send(embed=_embed(
+                "• __**Bad Argument**__\n"
+                "Usage: `+massreactuser <@user> <limit> <emoji1> [emoji2 …]`\n"
+                "Ensure the user is a member of this server.",
+                color=COL_ERR,
+            ), delete_after=10)
 
     @deleteroles.error
     async def _deleteroles_error(self, ctx: commands.Context, error) -> None:
