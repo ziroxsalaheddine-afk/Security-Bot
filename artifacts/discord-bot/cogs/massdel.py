@@ -335,6 +335,119 @@ class Recovery(commands.Cog):
             view=None,
         )
 
+    # ── +massrole ──────────────────────────────────────────────────────────────
+
+    @commands.command(name="massrole")
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    @commands.cooldown(1, 60, commands.BucketType.guild)
+    async def massrole(self, ctx: commands.Context, role: discord.Role) -> None:
+        """Assign a role to every member currently in the server."""
+
+        members = ctx.guild.members
+        if not members:
+            await ctx.send(embed=_embed(
+                "• __**No Members Found**__\n"
+                "The member list is empty — ensure the bot has the `members` intent.",
+                color=COL_WARN,
+            ))
+            return
+
+        # Guard: role must be below the bot's top role
+        bot_top = ctx.guild.me.top_role.position if ctx.guild.me else 0
+        if role.position >= bot_top:
+            await ctx.send(embed=_embed(
+                f"• __**Hierarchy Error**__\n"
+                f"**{role.name}** is at or above the bot's top role and cannot be assigned.",
+                color=COL_ERR,
+            ))
+            return
+
+        progress = await ctx.send(embed=_embed(
+            f"• __**Mass Role Assignment — Starting**__\n\n"
+            f"Assigning **{role.name}** to `{len(members)}` member(s)…\n"
+            f"*This may take a while — please wait.*",
+            color=COL_WARN,
+        ))
+
+        assigned = 0
+        skipped  = 0
+        already  = 0
+
+        for member in members:
+            if role in member.roles:
+                already += 1
+                continue
+            try:
+                await member.add_roles(role, reason=f"[Guardian +massrole] by {ctx.author}")
+                assigned += 1
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.warning("Could not assign role '%s' to '%s': %s", role.name, member, exc)
+                skipped += 1
+            await asyncio.sleep(0.2)
+
+        await progress.edit(embed=_embed(
+            f"• __**Mass Role Assignment — Complete**__\n\n"
+            f"`✅` Assigned **{role.name}** to: **{assigned}** member(s)\n"
+            + (f"`⏭️` Already had role: **{already}** member(s)\n" if already else "")
+            + (f"`⚠️` Could not assign: **{skipped}** member(s)\n" if skipped else ""),
+            color=COL_OK if not skipped else COL_WARN,
+        ))
+
+    # ── +massroleusers ─────────────────────────────────────────────────────────
+
+    @commands.command(name="massroleusers")
+    @commands.guild_only()
+    @commands.has_permissions(administrator=True)
+    @commands.cooldown(1, 30, commands.BucketType.guild)
+    async def massroleusers(self, ctx: commands.Context,
+                            role: discord.Role,
+                            members: commands.Greedy[discord.Member]) -> None:
+        """Assign a role to a specific list of members (mentions or IDs)."""
+
+        if not members:
+            await ctx.send(embed=_embed(
+                "• __**No Members Provided**__\n"
+                "Usage: `+massroleusers <@role> <@user1> <@user2> …`",
+                color=COL_WARN,
+            ))
+            return
+
+        # Guard: role must be below the bot's top role
+        bot_top = ctx.guild.me.top_role.position if ctx.guild.me else 0
+        if role.position >= bot_top:
+            await ctx.send(embed=_embed(
+                f"• __**Hierarchy Error**__\n"
+                f"**{role.name}** is at or above the bot's top role and cannot be assigned.",
+                color=COL_ERR,
+            ))
+            return
+
+        assigned = 0
+        skipped  = 0
+        already  = 0
+
+        for member in members:
+            if role in member.roles:
+                already += 1
+                continue
+            try:
+                await member.add_roles(role, reason=f"[Guardian +massroleusers] by {ctx.author}")
+                assigned += 1
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                log.warning("Could not assign role '%s' to '%s': %s", role.name, member, exc)
+                skipped += 1
+            await asyncio.sleep(0.2)
+
+        await ctx.send(embed=_embed(
+            f"• __**Role Assignment — Complete**__\n\n"
+            f"Role: **{role.name}** · Target members: **{len(members)}**\n\n"
+            f"`✅` Assigned: **{assigned}** member(s)\n"
+            + (f"`⏭️` Already had role: **{already}** member(s)\n" if already else "")
+            + (f"`⚠️` Could not assign: **{skipped}** member(s)\n" if skipped else ""),
+            color=COL_OK if not skipped else COL_WARN,
+        ))
+
     # ── Error handlers ─────────────────────────────────────────────────────────
 
     @deleteroles.error
@@ -378,6 +491,46 @@ class Recovery(commands.Cog):
                 f"• __**Cooldown**__\nTry again in `{error.retry_after:.0f}s`.",
                 color=COL_WARN,
             ), delete_after=8)
+
+    @massrole.error
+    async def _massrole_error(self, ctx: commands.Context, error) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(embed=_embed(
+                "• __**Permission Denied**__\n"
+                "You need the **Administrator** permission to use this command.",
+                color=COL_ERR,
+            ), delete_after=10)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(embed=_embed(
+                f"• __**Cooldown**__\nTry again in `{error.retry_after:.0f}s`.",
+                color=COL_WARN,
+            ), delete_after=8)
+        elif isinstance(error, commands.BadArgument) or isinstance(error, commands.RoleNotFound):
+            await ctx.send(embed=_embed(
+                "• __**Role Not Found**__\n"
+                "Could not find that role. Usage: `+massrole <@role>`",
+                color=COL_ERR,
+            ), delete_after=10)
+
+    @massroleusers.error
+    async def _massroleusers_error(self, ctx: commands.Context, error) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(embed=_embed(
+                "• __**Permission Denied**__\n"
+                "You need the **Administrator** permission to use this command.",
+                color=COL_ERR,
+            ), delete_after=10)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(embed=_embed(
+                f"• __**Cooldown**__\nTry again in `{error.retry_after:.0f}s`.",
+                color=COL_WARN,
+            ), delete_after=8)
+        elif isinstance(error, commands.BadArgument) or isinstance(error, commands.RoleNotFound):
+            await ctx.send(embed=_embed(
+                "• __**Invalid Arguments**__\n"
+                "Usage: `+massroleusers <@role> <@user1> <@user2> …`",
+                color=COL_ERR,
+            ), delete_after=10)
 
 
 async def setup(bot: commands.Bot) -> None:

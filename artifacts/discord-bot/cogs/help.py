@@ -123,6 +123,8 @@ CATEGORIES: dict[str, dict] = {
             ("+deleteroles",                  "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
             ("+deletechannels",               "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
             ("+deleteemojis",                 "Deletes all custom emojis in the server. Requires Administrator permission."),
+            ("+massrole <@role>",             "Assigns the specified role to every member in the server. Shows live progress and a final count of assigned/skipped members. Requires Administrator permission."),
+            ("+massroleusers <@role> <...>",  "Assigns a role to a specific list of members (mentions or IDs). Example: `+massroleusers @Role @User1 @User2`. Requires Administrator permission."),
         ],
     },
     "Information": {
