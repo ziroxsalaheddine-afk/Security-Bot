@@ -11,8 +11,8 @@
     "prefix": "+",
     "antinuke": {
       "enabled": false,
-      "threshold": 3,
-      "interval": 5,
+      "threshold": 5,
+      "interval": 3,
       "action": "quarantine"
     },
     "automod": {
@@ -57,11 +57,12 @@
     "autoreact": true,
     "autoreactUsers": {
       "1186279659206357012": "<a:ugh:1497199349460107425>",
-      "1501130671404482624": "<a:dire:1497198565787832320>"
+      "1501130671404482624": "<a:dire:1497198565787832320>",
+      "951553322454769684": "<a:Red_Crown:1497198533621715155>"
     }
   },
   "logs": {
-    "channelId": 1496697545190015029
+    "channelId": 1527967361100156975
   },
   "quarantine": {
     "users": {},
