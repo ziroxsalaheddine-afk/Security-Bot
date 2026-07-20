@@ -42,7 +42,7 @@ HOME_IMAGE = (
 # ── Category definitions ───────────────────────────────────────────────────────
 CATEGORIES: dict[str, dict] = {
     "Security Modules": {
-        "emoji": "⚔️",
+        "emoji": "<:vrs_security:1528586273445511199>",
         "tagline": "Real-time threat annihilation — zero-latency, zero mercy.",
         "commands": [
             ("+antinuke",                  "Displays the current anti-nuke configuration panel."),
@@ -72,7 +72,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Aliases": {
-        "emoji": "⚙️",
+        "emoji": "<:limit:1528578427517669580>",
         "tagline": "Create shortcuts for any command — server-wide or personal.",
         "commands": [
             ("+alias add <alias> <cmd>",        "Creates a server-wide alias (max 10 per target command, 30s cooldown)."),
@@ -84,7 +84,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Music": {
-        "emoji": "🎵",
+        "emoji": "<a:2m_music:1458242634513645732>",
         "tagline": "Lavalink v4 — YouTube search, playlists, interactive Now Playing buttons.",
         "commands": [
             ("+play <name|URL>",   "Search by song name or paste a URL to queue a track/playlist. Joins your VC automatically."),
@@ -98,7 +98,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "DJ Whitelist": {
-        "emoji": "🎧",
+        "emoji": "<:11pm_undeaf:1329408741514154036>",
         "tagline": "Control who can use music commands and interact with music embed buttons.",
         "commands": [
             ("+dj add <@user|id>",    "Adds a user to the DJ whitelist, granting access to all music commands and buttons. (Owner only)"),
@@ -107,7 +107,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Recovery": {
-        "emoji": "🛡️",
+        "emoji": "<a:Warning:1527690506212081823>",
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
             ("+loadrole <@role>",             "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
@@ -130,7 +130,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Information": {
-        "emoji": "📜",
+        "emoji": "<a:gh1y1nee:1458439134766039165>",
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
             ("+scaninvites",            "Scans all active invites and flags dangerous ones (unlimited uses, no expiry, etc.)."),
@@ -200,7 +200,7 @@ class CategorySelect(discord.ui.Select):
                 label="Overview",
                 value="__home__",
                 description="Welcome page & bot introduction",
-                emoji="🏠",
+                emoji="<a:vrs_blackstar:1483194986622091505>",
             ),
         ]
         for name, data in CATEGORIES.items():
