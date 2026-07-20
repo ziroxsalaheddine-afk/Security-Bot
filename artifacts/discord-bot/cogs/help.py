@@ -127,6 +127,7 @@ CATEGORIES: dict[str, dict] = {
             ("+massroleusers <@role> <...>",             "Assigns a role to a specific list of members (mentions or IDs). Example: `+massroleusers @Role @User1 @User2`. Requires Administrator permission."),
             ("+massreactchannel <limit> <emoji...>",     "Adds one or more emoji reactions to the last <limit> messages in the current channel (max 100). Example: `+massreactchannel 10 👍 ❤️`. Requires Manage Messages."),
             ("+massreactuser <@user> <limit> <emoji...>","Scans the last <limit> messages (max 500) and reacts to every message sent by the specified user. Example: `+massreactuser @User 100 🔥`. Requires Manage Messages."),
+            ("+massdm <server_id> <limit> <message>", "DM-only, owner-only. Sends <message> to up to <limit> non-bot, non-admin members of <server_id>. Live progress tracker. 1 250 ms delay per DM."),
         ],
     },
     "Information": {
