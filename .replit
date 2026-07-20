@@ -66,5 +66,21 @@ LAVALINK_PASSWORD = "https://seretia.link/discord"
 LAVALINK_URI = "http://lavalinkv4.serenetia.com:80"
 
 [[ports]]
+localPort = 433
+externalPort = 3001
+
+[[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
+localPort = 8888
+externalPort = 3000

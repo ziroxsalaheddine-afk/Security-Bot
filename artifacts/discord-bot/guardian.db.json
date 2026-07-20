@@ -17,7 +17,7 @@
     },
     "automod": {
       "antiSpam": {
-        "enabled": true,
+        "enabled": false,
         "messageLimit": 5,
         "interval": 3000,
         "action": "timeout",
