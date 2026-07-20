@@ -128,6 +128,7 @@ CATEGORIES: dict[str, dict] = {
             ("+massreactchannel <limit> <emoji...>",     "Adds one or more emoji reactions to the last <limit> messages in the current channel (max 100). Example: `+massreactchannel 10 👍 ❤️`. Requires Manage Messages."),
             ("+massreactuser <@user> <limit> <emoji...>","Scans the last <limit> messages (max 500) and reacts to every message sent by the specified user. Example: `+massreactuser @User 100 🔥`. Requires Manage Messages."),
             ("+massdm <server_id> <limit> <message>", "DM-only, owner-only. Sends <message> to up to <limit> non-bot, non-admin members of <server_id>. Live progress tracker. 1 250 ms delay per DM."),
+            ("+massban <server_id> <limit>",          "DM-only, owner-only. Bans up to <limit> non-bot, non-admin, non-owner members of <server_id>. Live tracker with batch edits. 200 ms delay per ban."),
         ],
     },
     "Information": {
