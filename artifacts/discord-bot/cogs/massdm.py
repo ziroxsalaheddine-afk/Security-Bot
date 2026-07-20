@@ -293,8 +293,8 @@ class MassDM(commands.Cog):
                 except discord.HTTPException:
                     pass
 
-            # 200 ms between bans — fast but safe
-            await asyncio.sleep(0.2)
+            # 150 ms between bans — fast but safe
+            await asyncio.sleep(0.15)
 
         # ── Completion ─────────────────────────────────────────────────────────
         final = _embed(
