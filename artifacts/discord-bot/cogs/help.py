@@ -230,7 +230,7 @@ class CategorySelect(discord.ui.Select):
 class PrevButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="◀️",
+            emoji="<a:arrow_left_gn:1443948184266084402>",
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -246,7 +246,7 @@ class PrevButton(discord.ui.Button):
 class PageLabel(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="📄",
+            emoji="<a:vrs_blackearth:1483195023280443577>",
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -259,7 +259,7 @@ class PageLabel(discord.ui.Button):
 class NextButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="▶️",
+            emoji="<a:arrow_right_gn:1443948175391064147>",
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
