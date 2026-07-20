@@ -42,7 +42,7 @@ HOME_IMAGE = (
 # ── Category definitions ───────────────────────────────────────────────────────
 CATEGORIES: dict[str, dict] = {
     "Security Modules": {
-        "emoji": "🛡️",
+        "emoji": "⚔️",
         "tagline": "Real-time threat annihilation — zero-latency, zero mercy.",
         "commands": [
             ("+antinuke",                  "Displays the current anti-nuke configuration panel."),
@@ -72,7 +72,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Aliases": {
-        "emoji": "👻",
+        "emoji": "⚙️",
         "tagline": "Create shortcuts for any command — server-wide or personal.",
         "commands": [
             ("+alias add <alias> <cmd>",        "Creates a server-wide alias (max 10 per target command, 30s cooldown)."),
@@ -107,7 +107,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Recovery": {
-        "emoji": "⚠️",
+        "emoji": "🛡️",
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
         "commands": [
             ("+loadrole <@role>",             "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
@@ -130,7 +130,7 @@ CATEGORIES: dict[str, dict] = {
         ],
     },
     "Information": {
-        "emoji": "ℹ️",
+        "emoji": "📜",
         "tagline": "Intelligence tools — inspect, verify, and monitor your server.",
         "commands": [
             ("+scaninvites",            "Scans all active invites and flags dangerous ones (unlimited uses, no expiry, etc.)."),
