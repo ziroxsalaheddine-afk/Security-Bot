@@ -121,6 +121,11 @@ class MassDM(commands.Cog):
 
         success = 0
         failed  = 0
+        total   = len(valid)
+
+        # Batch step: reduce edit_message API calls while keeping the owner informed.
+        # ≥ 500 targets → update every 100 members; < 500 → every 50 members.
+        step = 100 if total >= 500 else 50
 
         for i, member in enumerate(valid, start=1):
             # Attempt DM
@@ -130,14 +135,15 @@ class MassDM(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 failed += 1
 
-            # Edit live tracker after every attempt
-            try:
-                await status_msg.edit(embed=_embed(
-                    f"Progress: **{i} / {len(valid)}** | ✅ Success: **{success}** | ❌ Failed: **{failed}**",
-                    color=COL,
-                ))
-            except discord.HTTPException:
-                pass
+            # Edit tracker only on step boundaries or the very last member
+            if i % step == 0 or i == total:
+                try:
+                    await status_msg.edit(embed=_embed(
+                        f"Progress: **{i} / {total}** | ✅ Success: **{success}** | ❌ Failed: **{failed}**",
+                        color=COL,
+                    ))
+                except discord.HTTPException:
+                    pass
 
             # 1 250 ms cooldown between every DM — mandatory rate-limit safety
             await asyncio.sleep(DM_SLEEP)
