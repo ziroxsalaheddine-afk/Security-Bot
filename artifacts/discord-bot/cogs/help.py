@@ -222,31 +222,20 @@ def _category_embed(cat_name: str, page: int) -> discord.Embed:
 # ── UI components ──────────────────────────────────────────────────────────────
 
 class CategorySelect(discord.ui.Select):
-    def __init__(self, use_fallback: bool = False):
-        if use_fallback:
-            overview_emoji: discord.PartialEmoji | str = _FB_OVERVIEW
-        else:
-            overview_emoji = _pe("<a:vrs_blackstar:1483194986622091505>")
-
+    def __init__(self):
         opts = [
             discord.SelectOption(
                 label="Overview",
                 value="__home__",
                 description="Welcome page & bot introduction",
-                emoji=overview_emoji,
             ),
         ]
         for name, data in CATEGORIES.items():
-            if use_fallback:
-                cat_emoji: discord.PartialEmoji | str = CATEGORY_FALLBACKS.get(name, "📁")
-            else:
-                cat_emoji = _pe(data["emoji"])
             opts.append(
                 discord.SelectOption(
                     label=name,
                     value=name,
                     description=data["tagline"][:100],
-                    emoji=cat_emoji,
                 )
             )
         super().__init__(
@@ -318,7 +307,7 @@ class HelpView(discord.ui.View):
         self.current_page      = 0
         self.message: discord.Message | None = None
 
-        self._select = CategorySelect(use_fallback=use_fallback)
+        self._select = CategorySelect()
         self._prev   = PrevButton(use_fallback=use_fallback)
         self._label  = PageLabel(use_fallback=use_fallback)
         self._next   = NextButton(use_fallback=use_fallback)
