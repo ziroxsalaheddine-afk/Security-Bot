@@ -28,6 +28,22 @@ def _pe(emoji_str: str) -> discord.PartialEmoji:
     animated, name, eid = m.group(1) == "a", m.group(2), int(m.group(3))
     return discord.PartialEmoji(name=name, id=eid, animated=animated)
 
+
+# Unicode fallbacks used when Discord rejects the custom emojis (error 50035).
+# This happens when the bot is not a member of the server that owns the emoji.
+CATEGORY_FALLBACKS: dict[str, str] = {
+    "Security Modules": "🛡️",
+    "Aliases":          "🔗",
+    "Music":            "🎵",
+    "DJ Whitelist":     "🎧",
+    "Recovery":         "⚠️",
+    "Information":      "ℹ️",
+}
+_FB_OVERVIEW = "🏠"
+_FB_PREV     = "◀️"
+_FB_LABEL    = "📄"
+_FB_NEXT     = "▶️"
+
 log = logging.getLogger("guardian.help")
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -206,22 +222,31 @@ def _category_embed(cat_name: str, page: int) -> discord.Embed:
 # ── UI components ──────────────────────────────────────────────────────────────
 
 class CategorySelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, use_fallback: bool = False):
+        if use_fallback:
+            overview_emoji: discord.PartialEmoji | str = _FB_OVERVIEW
+        else:
+            overview_emoji = _pe("<a:vrs_blackstar:1483194986622091505>")
+
         opts = [
             discord.SelectOption(
                 label="Overview",
                 value="__home__",
                 description="Welcome page & bot introduction",
-                emoji=_pe("<a:vrs_blackstar:1483194986622091505>"),
+                emoji=overview_emoji,
             ),
         ]
         for name, data in CATEGORIES.items():
+            if use_fallback:
+                cat_emoji: discord.PartialEmoji | str = CATEGORY_FALLBACKS.get(name, "📁")
+            else:
+                cat_emoji = _pe(data["emoji"])
             opts.append(
                 discord.SelectOption(
                     label=name,
                     value=name,
                     description=data["tagline"][:100],
-                    emoji=_pe(data["emoji"]),
+                    emoji=cat_emoji,
                 )
             )
         super().__init__(
@@ -240,9 +265,9 @@ class CategorySelect(discord.ui.Select):
 
 
 class PrevButton(discord.ui.Button):
-    def __init__(self):
+    def __init__(self, use_fallback: bool = False):
         super().__init__(
-            emoji=_pe("<a:arrow_left_gn:1443948184266084402>"),
+            emoji=_FB_PREV if use_fallback else _pe("<a:arrow_left_gn:1443948184266084402>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -256,9 +281,9 @@ class PrevButton(discord.ui.Button):
 
 
 class PageLabel(discord.ui.Button):
-    def __init__(self):
+    def __init__(self, use_fallback: bool = False):
         super().__init__(
-            emoji=_pe("<a:vrs_blackearth:1483195023280443577>"),
+            emoji=_FB_LABEL if use_fallback else _pe("<a:vrs_blackearth:1483195023280443577>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -269,9 +294,9 @@ class PageLabel(discord.ui.Button):
 
 
 class NextButton(discord.ui.Button):
-    def __init__(self):
+    def __init__(self, use_fallback: bool = False):
         super().__init__(
-            emoji=_pe("<a:arrow_right_gn:1443948175391064147>"),
+            emoji=_FB_NEXT if use_fallback else _pe("<a:arrow_right_gn:1443948175391064147>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -286,17 +311,17 @@ class NextButton(discord.ui.Button):
 
 
 class HelpView(discord.ui.View):
-    def __init__(self, author_id: int):
+    def __init__(self, author_id: int, use_fallback: bool = False):
         super().__init__(timeout=120)
         self.author_id         = author_id
         self.current_category: str | None = None
         self.current_page      = 0
         self.message: discord.Message | None = None
 
-        self._select = CategorySelect()
-        self._prev   = PrevButton()
-        self._label  = PageLabel()
-        self._next   = NextButton()
+        self._select = CategorySelect(use_fallback=use_fallback)
+        self._prev   = PrevButton(use_fallback=use_fallback)
+        self._label  = PageLabel(use_fallback=use_fallback)
+        self._next   = NextButton(use_fallback=use_fallback)
 
         for item in (self._select, self._prev, self._label, self._next):
             self.add_item(item)
@@ -361,7 +386,19 @@ class Help(commands.Cog):
             )
             return
         view = HelpView(ctx.author.id)
-        view.message = await ctx.send(embed=_home_embed(), view=view)
+        try:
+            view.message = await ctx.send(embed=_home_embed(), view=view)
+        except discord.HTTPException as exc:
+            # Discord rejects custom emojis the bot can't access (error 50035).
+            # Rebuild the view with unicode fallbacks and retry once.
+            if exc.code == 50035:
+                log.warning(
+                    "Custom emojis rejected by Discord (50035) — retrying with unicode fallbacks"
+                )
+                fallback_view = HelpView(ctx.author.id, use_fallback=True)
+                fallback_view.message = await ctx.send(embed=_home_embed(), view=fallback_view)
+            else:
+                raise
 
     @commands.command(name="checkalt")
     async def checkalt(self, ctx: commands.Context, member: discord.Member):
