@@ -24,15 +24,27 @@ class Information(commands.Cog):
     # ── +serverinfo / +si ──────────────────────────────────────────────────────
 
     @commands.command(name="serverinfo", aliases=["si"])
-    async def serverinfo(self, ctx: commands.Context):
-        guild = ctx.guild
+    async def serverinfo(self, ctx: commands.Context, server_id: Optional[int] = None):
+        # ── DM context: owner-only lookup by server_id ─────────────────────────
+        if ctx.guild is None:
+            if not await ctx.bot.is_owner(ctx.author):
+                return
+            if server_id is None:
+                return await ctx.send("Usage: `+serverinfo <server_id>`")
+            guild = ctx.bot.get_guild(server_id)
+            if guild is None:
+                return await ctx.send(
+                    f"Server `{server_id}` not found. The bot may not be a member of that server."
+                )
+        else:
+            guild = ctx.guild
 
         # ── Safe owner fetch ───────────────────────────────────────────────────
         # guild.owner is None when not cached; fetch_member fails if they left.
         # Either way we fall back to a plain ID string so the command never dies.
         try:
             owner = guild.owner or await guild.fetch_member(guild.owner_id)
-            owner_display = owner.mention
+            owner_display = f"{owner} (`{owner.id}`)" if ctx.guild is None else owner.mention
         except Exception:
             owner_display = f"`{guild.owner_id}`"
 
