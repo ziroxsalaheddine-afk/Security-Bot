@@ -8,6 +8,7 @@ discord.ui.View with:
   • Auto-disables after 120 s
 """
 
+import re
 import time
 import os as _os
 import logging
@@ -17,6 +18,15 @@ import discord
 from discord.ext import commands
 
 from utils import db
+
+
+def _pe(emoji_str: str) -> discord.PartialEmoji:
+    """Parse '<:name:id>' or '<a:name:id>' into a PartialEmoji."""
+    m = re.fullmatch(r"<(a?):(\w+):(\d+)>", emoji_str.strip())
+    if not m:
+        raise ValueError(f"Cannot parse emoji: {emoji_str!r}")
+    animated, name, eid = m.group(1) == "a", m.group(2), int(m.group(3))
+    return discord.PartialEmoji(name=name, id=eid, animated=animated)
 
 log = logging.getLogger("guardian.help")
 
@@ -202,7 +212,7 @@ class CategorySelect(discord.ui.Select):
                 label="Overview",
                 value="__home__",
                 description="Welcome page & bot introduction",
-                emoji="<a:vrs_blackstar:1483194986622091505>",
+                emoji=_pe("<a:vrs_blackstar:1483194986622091505>"),
             ),
         ]
         for name, data in CATEGORIES.items():
@@ -211,7 +221,7 @@ class CategorySelect(discord.ui.Select):
                     label=name,
                     value=name,
                     description=data["tagline"][:100],
-                    emoji=data["emoji"],
+                    emoji=_pe(data["emoji"]),
                 )
             )
         super().__init__(
@@ -232,7 +242,7 @@ class CategorySelect(discord.ui.Select):
 class PrevButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="<a:arrow_left_gn:1443948184266084402>",
+            emoji=_pe("<a:arrow_left_gn:1443948184266084402>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -248,7 +258,7 @@ class PrevButton(discord.ui.Button):
 class PageLabel(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="<a:vrs_blackearth:1483195023280443577>",
+            emoji=_pe("<a:vrs_blackearth:1483195023280443577>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
@@ -261,7 +271,7 @@ class PageLabel(discord.ui.Button):
 class NextButton(discord.ui.Button):
     def __init__(self):
         super().__init__(
-            emoji="<a:arrow_right_gn:1443948175391064147>",
+            emoji=_pe("<a:arrow_right_gn:1443948175391064147>"),
             style=discord.ButtonStyle.secondary,
             row=1,
             disabled=True,
