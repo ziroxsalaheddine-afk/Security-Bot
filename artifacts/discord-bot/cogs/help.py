@@ -1,11 +1,18 @@
 """
-Interactive Help System — Trossard
-═══════════════════════════════════
-discord.ui.View with:
-  • StringSelect dropdown (Overview / Security Modules / Recovery / Information)
-  • paginated command listing per category
-  • Per-user ownership check
-  • Auto-disables after 120 s
+Help System — Split public/owner menus
+═══════════════════════════════════════
+
++help  (server channels)
+    Public-facing interactive help.  Displays only safe, standard commands
+    that regular server members and staff are allowed to know about.
+    Sensitive or destructive commands (Mass DM, Mass Ban, all owner-DM-only
+    tools) are completely absent — they never appear in this menu.
+
++dm   (DMs only, bot owner only)
+    Owner-only DM command reference.  Displays every DM management command:
+    server inspection, channel/role control, mass-action tools, and the
+    auto-backup toggle.  Silently ignored if used in a server or by anyone
+    who is not the bot owner.
 """
 
 import re
@@ -19,6 +26,8 @@ from discord.ext import commands
 
 from utils import db
 
+log = logging.getLogger("guardian.help")
+
 
 def _pe(emoji_str: str) -> discord.PartialEmoji:
     """Parse '<:name:id>' or '<a:name:id>' into a PartialEmoji."""
@@ -29,8 +38,7 @@ def _pe(emoji_str: str) -> discord.PartialEmoji:
     return discord.PartialEmoji(name=name, id=eid, animated=animated)
 
 
-# Unicode fallbacks used when Discord rejects the custom emojis (error 50035).
-# This happens when the bot is not a member of the server that owns the emoji.
+# ── Unicode fallbacks (used when Discord rejects custom emojis, error 50035) ──
 CATEGORY_FALLBACKS: dict[str, str] = {
     "Security Modules": "🛡️",
     "Aliases":          "🔗",
@@ -38,26 +46,25 @@ CATEGORY_FALLBACKS: dict[str, str] = {
     "DJ Whitelist":     "🎧",
     "Recovery":         "⚠️",
     "Information":      "ℹ️",
+    # DM-menu categories
+    "Server Management":    "🖥️",
+    "Channel & Role Tools": "⚙️",
+    "Mass Actions":         "⚡",
+    "Auto-Backup":          "💾",
 }
 _FB_OVERVIEW = "🏠"
 _FB_PREV     = "◀️"
 _FB_LABEL    = "📄"
 _FB_NEXT     = "▶️"
 
-log = logging.getLogger("guardian.help")
+# ── Embed styling ──────────────────────────────────────────────────────────────
+FOOTER       = "© 2026 — developed by zrx.gg"
+BANNER_FILE  = _os.path.join(_os.path.dirname(__file__), "..", "assets", "banner.gif")
+PAGE_SIZE    = 4
+COL_HOME     = 0xE2D6A5
+COL_CAT      = 0xE2D6A5
+COL_DM       = 0x2B2D31
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-FOOTER        = "© 2026 — developed by zrx.gg"
-BANNER_FILE   = _os.path.join(_os.path.dirname(__file__), "..", "assets", "banner.gif")
-BANNER_ATTACH = "attachment://banner.gif"
-PAGE_SIZE     = 4
-
-# Home embed — cream/gothic palette
-COL_HOME = 0xE2D6A5
-# Category embeds — same cream to stay consistent
-COL_CAT  = 0xE2D6A5
-
-# The animated gif shown as the main image on the home embed
 HOME_IMAGE = (
     "https://cdn.discordapp.com/attachments/1496697643127279646/"
     "1523507326923964456/f7812e1249081221bb80abb048698308.gif"
@@ -65,8 +72,17 @@ HOME_IMAGE = (
 )
 
 
-# ── Category definitions ───────────────────────────────────────────────────────
-CATEGORIES: dict[str, dict] = {
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC HELP  — safe commands only, shown to every server member
+#
+#  Rules applied:
+#    • +massdm  is REMOVED  (owner-DM-only destructive action)
+#    • +massban is REMOVED  (owner-DM-only destructive action)
+#    All owner-DM tools (list, linkserver, leftserver, etc.) never appeared
+#    in the public menu — they live exclusively in the +dm menu below.
+# ══════════════════════════════════════════════════════════════════════════════
+
+PUBLIC_CATEGORIES: dict[str, dict] = {
     "Security Modules": {
         "emoji": "<:vrs_security:1528586273445511199>",
         "tagline": "Real-time threat annihilation — zero-latency, zero mercy.",
@@ -91,8 +107,7 @@ CATEGORIES: dict[str, dict] = {
             ("+setlog <#channel>",         "Sets the channel where all moderation/security events are logged."),
             ("+setlog",                    "Run with no channel to disable logging."),
             ("+autoreact on/off",          "Toggles auto-react globally (command confirmations + per-user reactions)."),
-            ("+autoreact",                 "Run with no argument to check whether auto-react is currently on or off."),
-            ("+autoreact add @user :emoji:", "Binds an emoji so the bot auto-reacts to every message that user sends."),
+            ("+autoreact add @user :emoji:","Binds an emoji so the bot auto-reacts to every message that user sends."),
             ("+autoreact remove @user",    "Removes a user's auto-react binding."),
             ("+autoreact list",            "Shows global status and every user with an assigned auto-react emoji."),
         ],
@@ -135,6 +150,8 @@ CATEGORIES: dict[str, dict] = {
     "Recovery": {
         "emoji": "<a:Warning:1527690506212081823>",
         "tagline": "Precision restoration — rebuild exactly what was destroyed.",
+        # ⚠️  +massdm and +massban are intentionally omitted here.
+        # They are DM-only owner commands and belong exclusively in +dm.
         "commands": [
             ("+loadrole <@role>",             "Deep-clones a role (Color, Hoist, Permissions, Icon) and bulk re-assigns it to all original members."),
             ("+clonerole <@role>",            "Alias for +loadrole — identical functionality, alternate syntax."),
@@ -142,19 +159,19 @@ CATEGORIES: dict[str, dict] = {
             ("+clonechannel <#ch>",           "Alias for +loadchannel — identical functionality, alternate syntax."),
             ("+backup create",                "Snapshots the entire server (roles, categories, channels, emojis, soundboard, members) and saves it with a unique Backup ID."),
             ("+backup list",                  "Displays an embed listing all saved backups — shows Backup ID, original server name, and creation date."),
-            ("+backup load <id>",             "Opens the interactive multi-select restore UI: choose what to Wipe (Roles / Channels / Emojis / Soundboard) and what to Load independently, then click Validate & Start. Nothing is touched until you confirm."),
+            ("+backup load <id>",             "Opens the interactive multi-select restore UI: choose what to Wipe and what to Load, then click Validate & Start. Nothing is touched until you confirm."),
             ("+backup delete <id>",           "Permanently deletes a saved backup by its Backup ID."),
+            ("+auto backup on",               "Enable 5-minute rolling auto-backup for this server. Each run replaces the previous snapshot automatically."),
+            ("+auto backup off",              "Stop the auto-backup loop for this server."),
             ("+restore [guild_id]",           "(Legacy) Replays a guild-id-based snapshot into the current server without wiping first."),
             ("+cloneroles <source_guild_id>", "Copies all roles from another server's legacy backup into this server, sorted by exact hierarchical position."),
             ("+deleteroles",                  "Deletes all non-managed roles below the bot's top role. Skips @everyone, Nitro/integration roles, and any role above the bot. Requires Administrator permission."),
-            ("+deletechannels",               "Deletes all channels and categories in the server. The command channel is always preserved so the bot can report completion. Requires Administrator permission."),
+            ("+deletechannels",               "Deletes all channels and categories in the server. The command channel is always preserved. Requires Administrator permission."),
             ("+deleteemojis",                 "Deletes all custom emojis in the server. Requires Administrator permission."),
-            ("+massrole <@role>",                        "Assigns the specified role to every member in the server. Shows live progress and a final count of assigned/skipped members. Requires Administrator permission."),
+            ("+massrole <@role>",                        "Assigns the specified role to every member in the server. Shows live progress and a final count. Requires Administrator permission."),
             ("+massroleusers <@role> <...>",             "Assigns a role to a specific list of members (mentions or IDs). Example: `+massroleusers @Role @User1 @User2`. Requires Administrator permission."),
-            ("+massreactchannel <limit> <emoji...>",     "Adds one or more emoji reactions to the last <limit> messages in the current channel (max 100). Example: `+massreactchannel 10 👍 ❤️`. Requires Manage Messages."),
-            ("+massreactuser <@user> <limit> <emoji...>","Scans the last <limit> messages (max 500) and reacts to every message sent by the specified user. Example: `+massreactuser @User 100 🔥`. Requires Manage Messages."),
-            ("+massdm <server_id> <limit> <message>", "DM-only, owner-only. Sends <message> to up to <limit> non-bot, non-admin members of <server_id>. Live progress tracker. 1 250 ms delay per DM."),
-            ("+massban <server_id> <limit>",          "DM-only, owner-only. Bans up to <limit> non-bot, non-admin, non-owner members of <server_id>. Live tracker with batch edits. 200 ms delay per ban."),
+            ("+massreactchannel <limit> <emoji...>",     "Adds one or more emoji reactions to the last <limit> messages in the current channel (max 100). Requires Manage Messages."),
+            ("+massreactuser <@user> <limit> <emoji...>","Scans the last <limit> messages and reacts to every message by the specified user (max 500). Requires Manage Messages."),
         ],
     },
     "Information": {
@@ -167,7 +184,7 @@ CATEGORIES: dict[str, dict] = {
             ("+userinfo <@user>",       "Shows full member details — roles, account age, join date, and whitelist status."),
             ("+serverinfo | +si",       "Displays a full server snapshot — members, channels, boosts, bans, verification, and more."),
             ("+roleinfo <@role> | +ri", "Displays detailed info for a role — color, position, permissions, and member count."),
-            ("+searchuser [length]",    "Finds available Discord usernames of a given length (3–15 chars, default 5). Checks availability via Discord's API."),
+            ("+searchuser [length]",    "Finds available Discord usernames of a given length (3–15 chars, default 5)."),
             ("+support",                "Sends contact information to reach the Trossard development team."),
             ("+setup",                  "Opens the interactive fast-setup wizard to configure all security modules."),
         ],
@@ -175,23 +192,57 @@ CATEGORIES: dict[str, dict] = {
 }
 
 
-# ── Embed builders ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  OWNER DM HELP  — shown only to the bot owner, only in DMs
+#
+#  Covers every DM-management and mass-action command that would be
+#  inappropriate to expose in a public server context.
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _home_embed() -> discord.Embed:
-    e = discord.Embed(
-        title="Trossard ♱",
-        description=(
-            "Welcome, I'm Trossard ♱ a premium security bot for admins and I have "
-            "powerful tools so I hope you're happy with my service."
-            "\n\n"
-            "*if you need any help, just use **+support** cmd to report it to the developers*"
-        ),
-        color=COL_HOME,
-    )
-    e.set_image(url=HOME_IMAGE)
-    e.set_footer(text=FOOTER)
-    return e
+DM_CATEGORIES: dict[str, dict] = {
+    "Server Management": {
+        "emoji": "🖥️",
+        "tagline": "Remotely inspect and control any server the bot is in.",
+        "commands": [
+            ("+list",             "List every server the bot is currently in, with IDs."),
+            ("+linkserver <id>",  "Return the vanity URL or generate a fresh permanent invite for a server."),
+            ("+leftserver <id>",  "Force the bot to leave a server by its numeric ID."),
+            ("+permserver <id>",  "Display every guild-level permission the bot holds in a server."),
+            ("+serverinfo <id>",  "Pull a full server info embed remotely — same output as +serverinfo in-guild."),
+        ],
+    },
+    "Channel & Role Tools": {
+        "emoji": "⚙️",
+        "tagline": "Surgically manage channels and roles via dropdown UI — no server visit needed.",
+        "commands": [
+            ("+deleteserverchannels <id>",        "Open a multi-select dropdown listing all channels in a server. Select any combination and the bot deletes them with a 350 ms delay between each."),
+            ("+deleteserverroles <id>",           "Open a multi-select dropdown of deletable roles (non-managed, below bot's top). Select any and the bot deletes them with a 350 ms delay between each."),
+            ("+manageroles <id>",                 "Open a role toggle menu for yourself in a server. ✅ = you have it (select to remove). ➕ = you don't (select to add). Menu stays active for multiple toggles."),
+            ("+manageroles <id> <user_id>",       "Same toggle menu but targets another member. Specify their user ID as the second argument."),
+        ],
+    },
+    "Mass Actions": {
+        "emoji": "⚡",
+        "tagline": "High-volume operations — handle with care and intent.",
+        "commands": [
+            ("+massdm <server_id> <limit> <msg>",  "Send <msg> to up to <limit> non-bot, non-admin members of <server_id>. Live progress tracker. 1 250 ms delay per DM."),
+            ("+massban <server_id> <limit>",        "Ban up to <limit> non-bot, non-admin, non-owner members of <server_id>. Live tracker with batch edits. 200 ms delay per ban."),
+        ],
+    },
+    "Auto-Backup": {
+        "emoji": "💾",
+        "tagline": "Automatic 5-minute rolling server snapshots — always up to date.",
+        "commands": [
+            ("+auto backup on",   "Enable 5-minute auto-backup for the current server. Runs continuously; each cycle deletes the old backup and writes a fresh one."),
+            ("+auto backup off",  "Disable auto-backup and stop the interval loop for the current server. The last snapshot file remains on disk."),
+        ],
+    },
+}
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Shared embed builders
+# ══════════════════════════════════════════════════════════════════════════════
 
 def _fmt_commands(cmds: list[tuple], page: int) -> str:
     start = page * PAGE_SIZE
@@ -202,8 +253,24 @@ def _fmt_commands(cmds: list[tuple], page: int) -> str:
     return "\n\n".join(lines)
 
 
-def _category_embed(cat_name: str, page: int) -> discord.Embed:
-    cat   = CATEGORIES[cat_name]
+def _home_embed() -> discord.Embed:
+    e = discord.Embed(
+        title="Trossard ♱",
+        description=(
+            "Welcome, I'm Trossard ♱ a premium security bot for admins and I have "
+            "powerful tools so I hope you're happy with my service."
+            "\n\n"
+            "*If you need any help, just use **+support** to reach the developers.*"
+        ),
+        color=COL_HOME,
+    )
+    e.set_image(url=HOME_IMAGE)
+    e.set_footer(text=FOOTER)
+    return e
+
+
+def _category_embed(cat_name: str, page: int, *, categories: dict) -> discord.Embed:
+    cat   = categories[cat_name]
     cmds  = cat["commands"]
     total = max(1, (len(cmds) + PAGE_SIZE - 1) // PAGE_SIZE)
 
@@ -219,10 +286,28 @@ def _category_embed(cat_name: str, page: int) -> discord.Embed:
     return e
 
 
-# ── UI components ──────────────────────────────────────────────────────────────
+def _dm_home_embed() -> discord.Embed:
+    """Home embed for the +dm owner DM menu."""
+    e = discord.Embed(
+        title="Trossard ♱  —  Owner DM Commands",
+        description=(
+            "This menu shows **all DM-management and owner-only commands**.\n"
+            "These commands are hidden from the public `+help` menu.\n\n"
+            "*Commands only work in DMs — using them in a server has no effect.*"
+        ),
+        color=COL_DM,
+    )
+    e.set_footer(text=FOOTER)
+    return e
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PUBLIC HELP UI
+# ══════════════════════════════════════════════════════════════════════════════
 
 class CategorySelect(discord.ui.Select):
-    def __init__(self):
+    def __init__(self, categories: dict):
+        self._categories = categories
         opts = [
             discord.SelectOption(
                 label="Overview",
@@ -230,7 +315,7 @@ class CategorySelect(discord.ui.Select):
                 description="Welcome page & bot introduction",
             ),
         ]
-        for name, data in CATEGORIES.items():
+        for name, data in categories.items():
             opts.append(
                 discord.SelectOption(
                     label=name,
@@ -300,14 +385,30 @@ class NextButton(discord.ui.Button):
 
 
 class HelpView(discord.ui.View):
-    def __init__(self, author_id: int, use_fallback: bool = False):
+    """
+    Interactive public help view.
+    • CategorySelect dropdown to switch between public categories.
+    • Prev / Label / Next pagination buttons.
+    • Owned by the invoking user (others get an ephemeral rejection).
+    • Auto-disables after 120 s of inactivity.
+    """
+
+    def __init__(
+        self,
+        author_id: int,
+        categories: dict,
+        use_fallback: bool = False,
+        home_embed_fn=None,
+    ):
         super().__init__(timeout=120)
         self.author_id         = author_id
+        self.categories        = categories
+        self.home_embed_fn     = home_embed_fn or _home_embed
         self.current_category: str | None = None
         self.current_page      = 0
         self.message: discord.Message | None = None
 
-        self._select = CategorySelect()
+        self._select = CategorySelect(categories)
         self._prev   = PrevButton(use_fallback=use_fallback)
         self._label  = PageLabel(use_fallback=use_fallback)
         self._next   = NextButton(use_fallback=use_fallback)
@@ -320,14 +421,13 @@ class HelpView(discord.ui.View):
     def _total_pages(self) -> int:
         if self.current_category is None:
             return 1
-        cmds = CATEGORIES[self.current_category]["commands"]
+        cmds = self.categories[self.current_category]["commands"]
         return max(1, (len(cmds) + PAGE_SIZE - 1) // PAGE_SIZE)
 
     def _update_buttons(self):
         # NOTE: deliberately NOT named _refresh — discord.py's View base class
-        # has an internal _refresh(components) method.  Shadowing it with a
-        # zero-argument override causes a TypeError on every MESSAGE_UPDATE
-        # event and crashes the entire bot process.
+        # has an internal _refresh(components) method.  Shadowing it causes a
+        # TypeError on every MESSAGE_UPDATE event and crashes the bot process.
         tp      = self._total_pages()
         on_home = self.current_category is None
         self._prev.disabled  = on_home or self.current_page <= 0
@@ -337,8 +437,9 @@ class HelpView(discord.ui.View):
 
     def _embed(self) -> discord.Embed:
         if self.current_category is None:
-            return _home_embed()
-        return _category_embed(self.current_category, self.current_page)
+            return self.home_embed_fn()
+        return _category_embed(self.current_category, self.current_page,
+                               categories=self.categories)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id:
@@ -358,36 +459,88 @@ class HelpView(discord.ui.View):
                 pass
 
 
-# ── Cog ────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#  Cog
+# ══════════════════════════════════════════════════════════════════════════════
 
 class Help(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot    = bot
         self._start = time.time()
 
+    # ── +help (public) ─────────────────────────────────────────────────────────
+
     @commands.command(name="help")
     async def help_cmd(self, ctx: commands.Context):
-        if not db.is_owner(ctx.author.id):
-            owner_ids = db.get_owners()
-            owner_id  = owner_ids[0] if owner_ids else 0
-            await ctx.reply(
-                f"owner only <@{owner_id}> <:locksc:1497746903394287626>"
-            )
-            return
-        view = HelpView(ctx.author.id)
+        """
+        Interactive public help menu.
+
+        Accessible to all server members — shows only safe, non-destructive
+        commands.  Sensitive owner-DM commands (Mass DM, Mass Ban, server
+        management tools) are completely hidden from this menu.
+
+        The bot owner can also use +dm in DMs to see all owner-only commands.
+        """
+        view = HelpView(ctx.author.id, PUBLIC_CATEGORIES)
         try:
             view.message = await ctx.send(embed=_home_embed(), view=view)
         except discord.HTTPException as exc:
-            # Discord rejects custom emojis the bot can't access (error 50035).
-            # Rebuild the view with unicode fallbacks and retry once.
+            # Discord rejects custom emojis the bot doesn't have access to (error 50035).
+            # Re-send with unicode fallbacks.
             if exc.code == 50035:
                 log.warning(
-                    "Custom emojis rejected by Discord (50035) — retrying with unicode fallbacks"
+                    "Custom emojis rejected (50035) in +help — retrying with unicode fallbacks"
                 )
-                fallback_view = HelpView(ctx.author.id, use_fallback=True)
-                fallback_view.message = await ctx.send(embed=_home_embed(), view=fallback_view)
+                fb_view = HelpView(ctx.author.id, PUBLIC_CATEGORIES, use_fallback=True)
+                fb_view.message = await ctx.send(embed=_home_embed(), view=fb_view)
             else:
                 raise
+
+    # ── +dm  (owner-only, DM-only) ─────────────────────────────────────────────
+
+    @commands.command(name="dm")
+    async def dm_help(self, ctx: commands.Context):
+        """
+        Owner-only DM command reference.
+
+        Rules:
+          • Must be used inside a Direct Message — silently ignored in servers.
+          • Must be invoked by the bot owner — silently ignored for everyone else.
+
+        Shows every DM-management and mass-action command that is hidden from
+        the public +help menu.
+        """
+        # ── DM-only guard ──────────────────────────────────────────────────────
+        if ctx.guild is not None:
+            return   # Silently ignore — never acknowledge in server channels.
+
+        # ── Owner-only guard ────────────────────────────────────────────────────
+        if not db.is_owner(ctx.author.id):
+            return   # Silently ignore — never reveal that this command exists.
+
+        view = HelpView(
+            ctx.author.id,
+            DM_CATEGORIES,
+            home_embed_fn=_dm_home_embed,
+        )
+        try:
+            view.message = await ctx.send(embed=_dm_home_embed(), view=view)
+        except discord.HTTPException as exc:
+            if exc.code == 50035:
+                log.warning(
+                    "Custom emojis rejected (50035) in +dm — retrying with unicode fallbacks"
+                )
+                fb_view = HelpView(
+                    ctx.author.id,
+                    DM_CATEGORIES,
+                    use_fallback=True,
+                    home_embed_fn=_dm_home_embed,
+                )
+                fb_view.message = await ctx.send(embed=_dm_home_embed(), view=fb_view)
+            else:
+                raise
+
+    # ── +checkalt ──────────────────────────────────────────────────────────────
 
     @commands.command(name="checkalt")
     async def checkalt(self, ctx: commands.Context, member: discord.Member):
@@ -412,6 +565,8 @@ class Help(commands.Cog):
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
 
+    # ── +botinfo ───────────────────────────────────────────────────────────────
+
     @commands.command(name="botinfo")
     async def botinfo(self, ctx: commands.Context):
         if not db.is_whitelisted(ctx.author.id):
@@ -426,7 +581,7 @@ class Help(commands.Cog):
         an      = cfg.get("antinuke", {})
         am      = cfg.get("automod", {})
         modules: list[str] = []
-        if an.get("enabled", True):                            modules.append("Anti-Nuke")
+        if an.get("enabled", True):                            modules.append("Anti-Nuke v2")
         if am.get("antiLink", {}).get("enabled", True):       modules.append("Anti-Link")
         if am.get("antiSpam", {}).get("enabled", True):       modules.append("Anti-Spam")
         if am.get("antiRaid", {}).get("enabled", True):       modules.append("Anti-Raid")
@@ -446,6 +601,8 @@ class Help(commands.Cog):
         )
         e.set_footer(text=FOOTER)
         await ctx.send(embed=e)
+
+    # ── +support ───────────────────────────────────────────────────────────────
 
     @commands.command(name="support")
     async def support(self, ctx: commands.Context):
@@ -471,6 +628,8 @@ class Help(commands.Cog):
             style=discord.ButtonStyle.link,
         ))
         await ctx.send(embed=e, view=view)
+
+    # ── Error handlers ──────────────────────────────────────────────────────────
 
     @checkalt.error
     async def _checkalt_error(self, ctx, error):
