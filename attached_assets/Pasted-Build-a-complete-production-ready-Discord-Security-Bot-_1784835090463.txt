@@ -1,0 +1,66 @@
+Build a complete, production-ready Discord Security Bot in Python using discord.py v2 and SQLite for database persistence. The bot must strictly enforce per-server data isolation (using `guild_id` for all configurations).
+
+### Technical Requirements & Setup:
+- Language: Python 3.11+
+- Library: `discord.py` (v2.x)
+- Database: SQLite3 (local persistent file `security_bot.db`)
+- Environment Variable: `DISCORD_TOKEN` for the bot token.
+- Intents Needed: `guilds`, `members`, `messages`, `message_content`, `moderation`.
+
+---
+
+### Database Schema (Per-Server Data Isolation):
+All settings, whitelists, and logs MUST be isolated by `guild_id`.
+1. `whitelist`: (guild_id INTEGER, user_id INTEGER, PRIMARY KEY (guild_id, user_id))
+2. `danger_roles`: (guild_id INTEGER, role_id INTEGER, PRIMARY KEY (guild_id, role_id))
+3. `danger_tags`: (guild_id INTEGER, user_id INTEGER, PRIMARY KEY (guild_id, user_id))
+4. `role_cache`: (guild_id INTEGER, user_id INTEGER, role_id INTEGER, PRIMARY KEY (guild_id, user_id, role_id))
+5. `server_settings`: (guild_id INTEGER, feature TEXT, status INTEGER, PRIMARY KEY (guild_id, feature))
+
+---
+
+### Core Security Modules to Implement:
+
+#### 1. Auto-Restore Deleted Roles & Assign Back to Members:
+- Continuously cache/sync all guild members and their assigned roles into SQLite (background task running every 5 minutes and on role update).
+- **`on_guild_role_delete` Listener:**
+  - When any role is deleted, automatically recreate the exact same role with identical permissions, color, hoist status, and name.
+  - Instantly fetch from `role_cache` all member IDs who previously had this deleted role.
+  - Re-assign the newly recreated role to all those members automatically.
+  - Update the DB cache with the new role ID.
+
+#### 2. Anti-Nuke Channel & Role Restore + Warnings:
+- If a channel or role is deleted by a user who is **NOT** on the server's Whitelist:
+  - Re-create/clone the deleted channel or role immediately.
+  - Check Guild Audit Logs to identify the offender and log a warning in the console/log channel.
+  - This rule applies even if the offender holds a role higher than the bot in the server role hierarchy.
+
+#### 3. Strict Per-Server Data Isolation & Settings Persistence:
+- Whitelist status, command toggles (ON/OFF), bypass rights, and danger lists configured on Server A must NEVER affect Server B.
+- All configuration commands (`+wl`, `+danger`, etc.) save state to SQLite instantly so settings persist through bot restarts.
+
+#### 4. Danger Roles Module (`+danger roles`):
+- **Command:** `+danger roles [add/remove] [@role]` (Requires Administrator permission).
+- **Logic (`on_member_update`):**
+  - Detect when a member is granted a new role.
+  - If the user giving the role is NOT whitelisted on that server, check if the assigned role is in `danger_roles` OR has `Administrator` permissions.
+  - If unauthorized, instantly remove the danger/admin role from the target member and issue a security warning log.
+
+#### 5. Danger Tag Module (`+danger tag` - 0ms Fast Mention Deletion):
+- **Command:** `+danger tag [add/remove] [@user/ID]` (Requires Administrator permission).
+- **Logic (`on_message`):**
+  - Intercept every message in real-time.
+  - If a message contains `@everyone` or `@here` mentions, check if the author is Whitelisted OR inside the `danger_tags` DB table for that guild.
+  - If the author is NOT authorized, delete the message instantly (0ms latency target) before mentions resolve, and send a temporary warning message.
+
+#### 6. Custom Help Menu & Whitelist Command:
+- **`+wl @user`**: Whitelist a trusted user for the current server.
+- **`+help`**: Display a clean, formatted Discord Embed split into categories:
+  - **Category: Security Modules**
+    - `+wl @user` — Add user to server whitelist/bypass.
+    - `+danger roles` — Manage protected/admin roles.
+    - `+danger tag` — Manage users allowed to use @everyone / @here mentions.
+
+---
+
+Please generate clean, modular Python code with appropriate error handling, comments, and structure.
