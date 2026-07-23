@@ -436,6 +436,17 @@ class AntiNuke(commands.Cog):
             if not role.is_default():
                 self._role_cache[guild.id][role.id] = self._serialize_role(role)
 
+    def _flush_role_members_to_db(self) -> None:
+        """Write the current in-memory role→member mapping to guardian.db.json.
+
+        Called after on_ready chunking so the DB always has a post-chunk
+        snapshot.  Every subsequent on_member_update call also patches the DB
+        incrementally, keeping it current without a full rewrite.
+        """
+        for guild_id, roles in self._role_cache.items():
+            mapping = {rid: data.get("members", []) for rid, data in roles.items()}
+            db.save_guild_role_members(guild_id, mapping)
+
     def _cache_guild_emojis(self, guild: discord.Guild) -> None:
         for emoji in guild.emojis:
             self._emoji_cache[guild.id][emoji.id] = {
@@ -474,10 +485,24 @@ class AntiNuke(commands.Cog):
     async def on_ready(self):
         tasks = []
         for guild in self.bot.guilds:
+            # Chunk all members so role.members is fully populated before we
+            # snapshot.  Without this, role.members is an empty list on every
+            # guild that hasn't been fully chunked yet (common at startup).
+            if not guild.chunked:
+                try:
+                    await guild.chunk(cache=True)
+                except Exception as exc:
+                    log.warning("Member chunk failed for guild %s: %s", guild.id, exc)
+
             self._cache_guild_channels_and_roles(guild)
             self._cache_guild_emojis(guild)
             tasks.append(self._cache_guild_soundboard(guild))
+
         await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Persist the freshly-chunked role→member mapping to disk so it
+        # survives bot restarts and is available the instant a role is deleted.
+        self._flush_role_members_to_db()
         log.info("Anti-nuke cache ready for %d guild(s).", len(self.bot.guilds))
 
     @commands.Cog.listener()
@@ -518,27 +543,48 @@ class AntiNuke(commands.Cog):
     async def on_guild_role_update(self, _before, after: discord.Role):
         if not after.is_default():
             self._role_cache[after.guild.id][after.id] = self._serialize_role(after)
+            # Keep the DB member list current for this role.
+            db.save_role_members(after.guild.id, after.id, [m.id for m in after.members])
 
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role):
         """
-        Layer-1 role delete.  Same pattern as channel delete — snapshot if missed.
+        Layer-1 role delete.
+
+        Discord empties role.members BEFORE dispatching this event, so calling
+        _serialize_role(role) here always produces an empty member list.
+
+        Strategy:
+        - If the role is already in _role_cache (kept current by on_member_update
+          and on_guild_role_update), its "members" field is correct — leave it alone.
+        - Cache miss (e.g. first boot without chunking, or race): build a snapshot
+          from the DB backup which was written continuously by on_member_update.
+          Fall back to role metadata from the live object (name/color/etc. are still
+          present) but source member_ids purely from the DB, never from role.members.
         """
         gid = role.guild.id
         if role.id not in self._role_cache.get(gid, {}):
-            self._role_cache[gid][role.id] = self._serialize_role(role)
+            member_ids = db.get_role_members(gid, role.id)
+            self._role_cache[gid][role.id] = {
+                "name":        role.name,
+                "color":       role.color.value,
+                "hoist":       role.hoist,
+                "mentionable": role.mentionable,
+                "permissions": role.permissions.value,
+                "position":    role.position,
+                "members":     member_ids,
+            }
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         """
-        Keep role member-lists in _role_cache accurate whenever a member's
-        roles change.
+        Keep role member-lists in _role_cache AND guardian.db.json accurate
+        whenever a member's roles change.
 
-        This is critical for role restoration: `_serialize_role()` at snapshot
-        time captures `role.members`, but that list changes as members gain /
-        lose the role between the snapshot and a delete event.  Patching the
-        cache on every `on_member_update` keeps the member roster current so
-        the restoration always re-assigns exactly the right people.
+        Patching both the in-memory cache and the DB on every on_member_update
+        means the member roster is always current and survives bot restarts.
+        Discord empties role.members before on_guild_role_delete fires, so
+        this continuous backup is the only reliable source of that information.
         """
         if before.roles == after.roles:
             return
@@ -550,10 +596,13 @@ class AntiNuke(commands.Cog):
         for role in gained | lost:
             if role.is_default():
                 continue
+            new_member_ids = [m.id for m in role.members]
+            # Patch in-memory cache.
             cached = self._role_cache.get(gid, {}).get(role.id)
             if cached is not None:
-                # Patch just the member list — avoid re-serialising the entire role.
-                cached["members"] = [m.id for m in role.members]
+                cached["members"] = new_member_ids
+            # Persist to DB so restarts don't lose the roster.
+            db.save_role_members(gid, role.id, new_member_ids)
 
     # ── Emoji update listener — Layer-1 emoji detection & pre-download ─────────
 
@@ -1336,6 +1385,17 @@ class AntiNuke(commands.Cog):
         error:      str | None = None
         reassigned  = 0
         member_ids: list[int] = data.get("members", [])
+
+        # If the in-memory cache had an empty member list (e.g. bot restarted
+        # without chunking before the role was deleted), fall back to the DB
+        # backup which is kept current by on_member_update.
+        if not member_ids:
+            member_ids = db.get_role_members(guild.id, role_id)
+            if member_ids:
+                log.info(
+                    "Role %d member list recovered from DB backup (%d members)",
+                    role_id, len(member_ids),
+                )
 
         try:
             new_role = await guild.create_role(

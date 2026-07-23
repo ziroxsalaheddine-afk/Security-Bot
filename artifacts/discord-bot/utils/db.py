@@ -42,6 +42,11 @@ _DEFAULT: dict = {
     "logs": {"channelId": None},
     "quarantine": {"users": {}, "role": None},
     "backups": {},
+    # role_members: guild_id_str → {role_id_str → [member_id_int, ...]}
+    # Persisted continuously so role restore works even after a bot restart.
+    "role_members": {},
+    # autoreact: guild_id_str → {user_id_str → emoji_str}
+    "autoreact": {},
 }
 
 _cache: Optional[dict] = None
@@ -211,3 +216,59 @@ def get_prefix() -> str:
 
 def set_prefix(prefix: str):
     set_config(["prefix"], prefix)
+
+
+# ── Role-member backup ────────────────────────────────────────────────────────
+# Stores guild_id_str → {role_id_str → [member_id_int, ...]} in the DB so
+# role restoration can find the original member list even after a bot restart
+# (Discord empties role.members before on_guild_role_delete fires).
+
+def save_role_members(guild_id: int, role_id: int, member_ids: list) -> None:
+    d = get()
+    rm = d.setdefault("role_members", {})
+    gs = rm.setdefault(str(guild_id), {})
+    gs[str(role_id)] = [int(m) for m in member_ids]
+    _save()
+
+
+def save_guild_role_members(guild_id: int, mapping: dict) -> None:
+    """Persist the complete role→member mapping for one guild in a single write."""
+    d = get()
+    rm = d.setdefault("role_members", {})
+    rm[str(guild_id)] = {str(rid): [int(m) for m in mids]
+                         for rid, mids in mapping.items()}
+    _save()
+
+
+def get_role_members(guild_id: int, role_id: int) -> list:
+    return get().get("role_members", {}).get(str(guild_id), {}).get(str(role_id), [])
+
+
+# ── Auto-react ────────────────────────────────────────────────────────────────
+# autoreact: guild_id_str → {user_id_str → emoji_str}
+
+def set_autoreact(guild_id: int, user_id: int, emoji: str) -> None:
+    d = get()
+    ar = d.setdefault("autoreact", {})
+    ar.setdefault(str(guild_id), {})[str(user_id)] = emoji
+    _save()
+
+
+def remove_autoreact(guild_id: int, user_id: int) -> bool:
+    d = get()
+    gs = d.get("autoreact", {}).get(str(guild_id), {})
+    key = str(user_id)
+    if key not in gs:
+        return False
+    del gs[key]
+    _save()
+    return True
+
+
+def get_autoreact_map(guild_id: int) -> dict:
+    """Return {user_id_str: emoji} for the guild."""
+    return get().get("autoreact", {}).get(str(guild_id), {})
+
+
+def get_autoreact_emoji(guild_id: int, user_id: int) -> Optional[str]:
+    return get().get("autoreact", {}).get(str(guild_id), {}).get(str(user_id))
