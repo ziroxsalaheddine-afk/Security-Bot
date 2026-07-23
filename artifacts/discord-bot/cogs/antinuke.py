@@ -1121,7 +1121,7 @@ class AntiNuke(commands.Cog):
 
         # ── Send punishment log embed ──────────────────────────────────────────
         p_embed = _punishment_embed(
-            actor=actor,
+            actor=user,           # `user` is the local name for the executor
             actor_member=member,
             guild=guild,
             trigger_action=trigger_action,
@@ -1346,6 +1346,15 @@ class AntiNuke(commands.Cog):
                 permissions=discord.Permissions(data["permissions"]),
                 reason="[Guardian] Anti-Nuke: Perfect auto-restore",
             )
+
+            # Best-effort position restore (roles are created at the bottom;
+            # move it back to its original position so channel overwrites still
+            # make visual sense in the role list).
+            try:
+                target_pos = max(1, data.get("position", 1))
+                await new_role.edit(position=target_pos)
+            except Exception:
+                pass  # Position edit can fail if hierarchy prevents it; not fatal.
 
             # Re-assign to every original member (batched, 350 ms between batches).
             async def _assign(mid: int) -> None:
@@ -1580,10 +1589,6 @@ class AntiNuke(commands.Cog):
             except Exception:
                 pass
 
-
-# Fix forward reference: `actor` used in _punish before the variable is named that way.
-# The local name in _punish is `user` — alias it at the call-sites in the embed functions.
-# (The embed functions accept `actor: discord.User` — callers pass `user` as `actor`.)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AntiNuke(bot))
