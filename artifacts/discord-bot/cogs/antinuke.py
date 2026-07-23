@@ -25,6 +25,8 @@ RESTORATION — Perfect Fidelity
              and every role/member permission overwrite (allow + deny bits).
 • Roles      name, color, hoist, mentionable, permissions.  Every member who
              originally had the role is re-assigned in batches of 15.
+             The role member-list stays accurate via on_member_update which
+             patches individual role entries as roles change per-member.
 • Emojis     CDN image pre-downloaded in Layer 1 (bytes cached in memory),
              re-uploaded with the original name — animated GIFs preserved.
 • Soundboard CDN audio pre-downloaded in Layer 1, re-uploaded via REST API
@@ -39,12 +41,30 @@ Bypass (60 %)   — Bypass users hit at 60 % of the configured threshold;
                   all their roles are stripped without full punishment.
 Ban → Kick      — If the malicious action WAS a ban, the executor receives
                   a KICK instead of a ban (avoids conflating ban/unban).
+Hierarchy guard — If the executor's top role is ≥ the bot's top role the
+                  bot cannot strip / kick them.  A Forbidden-safe path is
+                  taken, the block is recorded, and a hierarchy warning is
+                  included in every log embed for that event.
+
+DETAILED LOGGING
+────────────────
+Every detected action produces at least two rich embeds in the log channel:
+
+  1. Restoration embed  — asset name + old ID, executor tag + ID,
+     type/details, success / failure, elapsed ms, exact timestamp.
+  2. Punishment embed   — executor tag + ID, trigger action, punishment
+     type, success / partial / hierarchy-block, exact timestamp.
+
+Both embeds include a ⚠️ Hierarchy Warning field whenever the executor's
+top role was ≥ or = the bot's top role, so server owners know when the bot
+was unable to fully punish.
 """
 
 import time
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 
 import aiohttp
 import discord
@@ -64,6 +84,14 @@ DELETE_DELAY   = 0.35     # seconds between bulk-role re-assignments (rate-limit
 SEEN_TTL       = 30       # seconds before a dedup entry expires
 CDN            = "https://cdn.discordapp.com"
 DISCORD_API    = "https://discord.com/api/v10"
+
+# ── Embed colours ──────────────────────────────────────────────────────────────
+COL_RESTORED  = 0x2ECC71   # green  — action fully reversed
+COL_FAILED    = 0xE74C3C   # red    — restoration could not complete
+COL_PUNISHED  = 0x2ECC71   # green  — executor dealt with
+COL_HIERARCHY = 0xE67E22   # amber  — hierarchy blocked full punishment
+COL_DANGER    = 0xE74C3C   # red    — abuse / rogue user
+FOOTER        = "Guardian Security System"
 
 # ── Actions the engine watches ─────────────────────────────────────────────────
 
@@ -89,6 +117,212 @@ RATE_LIMIT_ACTIONS = {
     discord.AuditLogAction.ban,
     discord.AuditLogAction.kick,
 }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Local embed builders
+#  (richer than the generic utils/embeds.py helpers — tailored for antinuke)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _now_ts() -> str:
+    """Exact timestamp formatted as a Discord long date-time."""
+    return discord.utils.format_dt(datetime.now(timezone.utc), "F")
+
+
+def _executor_line(user: discord.User) -> str:
+    return f"{user} (`{user.id}`)"
+
+
+def _hierarchy_field(
+    member:    discord.Member,
+    guild:     discord.Guild,
+) -> tuple[str, str] | None:
+    """
+    Return a (name, value) pair for a hierarchy-warning field, or None if
+    the executor was safely below the bot.
+    """
+    bot_top = guild.me.top_role
+    usr_top = member.top_role
+    if usr_top >= bot_top:
+        return (
+            "⚠️ Hierarchy Warning",
+            f"Executor's top role **{usr_top.mention}** (pos `{usr_top.position}`) is "
+            f"**{'equal to' if usr_top == bot_top else 'above'}** the bot's top role "
+            f"**{bot_top.mention}** (pos `{bot_top.position}`).\n"
+            "Role-strip / kick may have been partially or fully blocked.",
+        )
+    return None
+
+
+def _build_embed(
+    title:     str,
+    color:     int,
+    fields:    list[tuple[str, str, bool]],
+    *,
+    footer:    str = FOOTER,
+) -> discord.Embed:
+    e = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
+    e.set_footer(text=footer)
+    for name, value, inline in fields:
+        e.add_field(name=name, value=value, inline=inline)
+    return e
+
+
+def _channel_restore_embed(
+    *,
+    data:        dict,
+    ch_id:       int,
+    new_ch:      discord.abc.GuildChannel | None,
+    actor:       discord.User,
+    actor_member: discord.Member | None,
+    guild:       discord.Guild,
+    elapsed_ms:  float,
+    error:       str | None,
+    ow_count:    int,
+) -> discord.Embed:
+    """
+    Rich restoration embed for a deleted channel event.
+
+    Always contains:
+      • Executor Name#discriminator + ID
+      • Deleted channel name + old ID
+      • Channel type
+      • Permission overwrite count
+      • New channel mention (if restored)
+      • Restoration status (Restored ✅ / Failed ❌) with elapsed time
+      • Exact timestamp (Discord format_dt)
+      • Hierarchy warning (if executor's top role ≥ bot's top role)
+    """
+    restored  = error is None and new_ch is not None
+    ch_type   = discord.ChannelType(data["type"]).name.replace("_", " ").title()
+    status    = f"✅ Restored in `{elapsed_ms:.1f}ms`" if restored else f"❌ Failed — `{error}`"
+
+    fields: list[tuple[str, str, bool]] = [
+        ("Executor",          _executor_line(actor),                      False),
+        ("Channel Deleted",   f"`#{data['name']}` (ID: `{ch_id}`)",       True),
+        ("Channel Type",      f"`{ch_type}`",                              True),
+        ("Perm. Overwrites",  f"`{ow_count}` restored",                   True),
+        ("New Channel",       new_ch.mention if new_ch else "`—`",        True),
+        ("Restoration",       status,                                       False),
+        ("Detected At",       _now_ts(),                                   False),
+    ]
+
+    # Hierarchy warning — only if the member is still in the guild.
+    if actor_member:
+        hw = _hierarchy_field(actor_member, guild)
+        if hw:
+            fields.append((hw[0], hw[1], False))
+
+    return _build_embed(
+        "🔄  Channel Restored" if restored else "❌  Channel Restore Failed",
+        COL_RESTORED if restored else COL_FAILED,
+        fields,
+    )
+
+
+def _role_restore_embed(
+    *,
+    data:         dict,
+    role_id:      int,
+    new_role:     discord.Role | None,
+    actor:        discord.User,
+    actor_member: discord.Member | None,
+    guild:        discord.Guild,
+    elapsed_ms:   float,
+    error:        str | None,
+    reassigned:   int,
+    total:        int,
+) -> discord.Embed:
+    """
+    Rich restoration embed for a deleted role event.
+
+    Always contains:
+      • Executor Name#discriminator + ID
+      • Deleted role name + old ID
+      • Color hex, permissions integer
+      • Members reassigned count (N / M)
+      • Restoration status (Restored ✅ / Failed ❌) with elapsed time
+      • Exact timestamp
+      • Hierarchy warning (if applicable)
+    """
+    restored = error is None and new_role is not None
+    color_hex = f"#{data['color']:06X}"
+    status    = f"✅ Restored in `{elapsed_ms:.1f}ms`" if restored else f"❌ Failed — `{error}`"
+
+    fields: list[tuple[str, str, bool]] = [
+        ("Executor",         _executor_line(actor),                           False),
+        ("Role Deleted",     f"`@{data['name']}` (ID: `{role_id}`)",          True),
+        ("Color",            f"`{color_hex}`",                                 True),
+        ("Permissions",      f"`{data['permissions']}`",                       True),
+        ("Members Affected", f"`{reassigned}` / `{total}` reassigned",        True),
+        ("Restoration",      status,                                            False),
+        ("Detected At",      _now_ts(),                                        False),
+    ]
+
+    if actor_member:
+        hw = _hierarchy_field(actor_member, guild)
+        if hw:
+            fields.append((hw[0], hw[1], False))
+
+    return _build_embed(
+        "🔄  Role Restored" if restored else "❌  Role Restore Failed",
+        COL_RESTORED if restored else COL_FAILED,
+        fields,
+    )
+
+
+def _punishment_embed(
+    *,
+    actor:            discord.User,
+    actor_member:     discord.Member | None,
+    guild:            discord.Guild,
+    trigger_action:   discord.AuditLogAction | None,
+    effective_action: str,
+    success:          bool,
+    hierarchy_block:  bool,
+    fail_reason:      str | None,
+) -> discord.Embed:
+    """
+    Dedicated punishment result embed — sent to the log channel after
+    every enforcement action, separate from the restoration embed.
+
+    Contains:
+      • Executor tag + ID
+      • Trigger action name
+      • Punishment applied (Ban / Kick / Strip)
+      • Status (✅ Success / ❌ Failed / ⚠️ Partial — hierarchy block)
+      • Hierarchy warning (if executor's top role ≥ bot's top role)
+      • Exact timestamp
+    """
+    action_name = trigger_action.name.replace("_", " ").title() if trigger_action else "Unknown"
+
+    if hierarchy_block and not success:
+        status = "⚠️ Blocked — hierarchy"
+        color  = COL_HIERARCHY
+        title  = "⚠️  Punishment Blocked — Hierarchy"
+    elif success:
+        status = "✅ Applied"
+        color  = COL_PUNISHED
+        title  = "🛡️  Executor Punished"
+    else:
+        status = f"❌ Failed — `{fail_reason}`"
+        color  = COL_FAILED
+        title  = "❌  Punishment Failed"
+
+    fields: list[tuple[str, str, bool]] = [
+        ("Executor",        _executor_line(actor),                                    False),
+        ("Trigger Action",  f"`{action_name}`",                                       True),
+        ("Punishment",      f"`{effective_action.upper()}`",                          True),
+        ("Status",          status,                                                    True),
+        ("Actioned At",     _now_ts(),                                                False),
+    ]
+
+    if hierarchy_block and actor_member:
+        hw = _hierarchy_field(actor_member, guild)
+        if hw:
+            fields.append((hw[0], hw[1], False))
+
+    return _build_embed(title, color, fields)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -294,6 +528,33 @@ class AntiNuke(commands.Cog):
         if role.id not in self._role_cache.get(gid, {}):
             self._role_cache[gid][role.id] = self._serialize_role(role)
 
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        """
+        Keep role member-lists in _role_cache accurate whenever a member's
+        roles change.
+
+        This is critical for role restoration: `_serialize_role()` at snapshot
+        time captures `role.members`, but that list changes as members gain /
+        lose the role between the snapshot and a delete event.  Patching the
+        cache on every `on_member_update` keeps the member roster current so
+        the restoration always re-assigns exactly the right people.
+        """
+        if before.roles == after.roles:
+            return
+
+        gid    = after.guild.id
+        gained = set(after.roles) - set(before.roles)
+        lost   = set(before.roles) - set(after.roles)
+
+        for role in gained | lost:
+            if role.is_default():
+                continue
+            cached = self._role_cache.get(gid, {}).get(role.id)
+            if cached is not None:
+                # Patch just the member list — avoid re-serialising the entire role.
+                cached["members"] = [m.id for m in role.members]
+
     # ── Emoji update listener — Layer-1 emoji detection & pre-download ─────────
 
     @commands.Cog.listener()
@@ -448,41 +709,52 @@ class AntiNuke(commands.Cog):
 
         member = guild.get_member(user.id)
 
-        # Punish in a background task so restoration can start in parallel.
-        punish_task = asyncio.create_task(
-            self._punish(guild, member, user, cfg,
-                         "Unauthorized destructive action",
-                         trigger_action=entry.action)
-        )
+        # ── For channel / role deletes: run punishment and restoration in
+        #    parallel (both are fast, neither depends on the other).
+        #    Both produce their own log embeds with full detail.
+        # ── For all other nuke actions: punish first, then log.
 
-        # ── Dispatch restoration based on action type ─────────────────────────
         if entry.action == discord.AuditLogAction.channel_delete:
-            await self._restore_channel(guild, entry, t0, user)
+            restore_task = asyncio.create_task(
+                self._restore_channel(guild, entry, t0, user, member, cfg)
+            )
+            await self._punish(guild, member, user, cfg,
+                               "Unauthorized channel deletion",
+                               trigger_action=entry.action)
+            await restore_task
 
         elif entry.action == discord.AuditLogAction.role_delete:
-            await self._restore_role(guild, entry, t0, user)
+            restore_task = asyncio.create_task(
+                self._restore_role(guild, entry, t0, user, member, cfg)
+            )
+            await self._punish(guild, member, user, cfg,
+                               "Unauthorized role deletion",
+                               trigger_action=entry.action)
+            await restore_task
 
         elif entry.action == discord.AuditLogAction.emoji_delete:
-            await self._restore_emoji(guild, entry, t0, user)
+            restore_task = asyncio.create_task(
+                self._restore_emoji(guild, entry, t0, user)
+            )
+            await self._punish(guild, member, user, cfg,
+                               "Unauthorized emoji deletion",
+                               trigger_action=entry.action)
+            await restore_task
 
         elif _SB_DELETE and entry.action == _SB_DELETE:
-            await self._restore_soundboard_sound(guild, entry, t0, user)
+            restore_task = asyncio.create_task(
+                self._restore_soundboard_sound(guild, entry, t0, user)
+            )
+            await self._punish(guild, member, user, cfg,
+                               "Unauthorized soundboard deletion",
+                               trigger_action=entry.action)
+            await restore_task
 
         else:
             # Ban / kick / webhook_create / member_prune — no object to restore.
-            elapsed = time.perf_counter() - t0
-            embed = embeds.stats(
-                f"🛡️  Action Blocked — {entry.action.name.replace('_', ' ').title()}",
-                elapsed,
-                fields=[
-                    ("Perpetrator", f"<@{user.id}>", True),
-                    ("Action",      f"`{entry.action.name}`", True),
-                    ("Status",      "`Punished`", True),
-                ],
-            )
-            await self._send_log(guild, embed)
-
-        await punish_task
+            await self._punish(guild, member, user, cfg,
+                               f"Unauthorized {entry.action.name}",
+                               trigger_action=entry.action)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Abuse / threshold checks
@@ -663,6 +935,7 @@ class AntiNuke(commands.Cog):
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Punishment
+    #  Returns a result dict for inclusion in log embeds.
     # ══════════════════════════════════════════════════════════════════════════
 
     async def _punish(
@@ -673,15 +946,37 @@ class AntiNuke(commands.Cog):
         cfg:            dict,
         reason:         str,
         trigger_action: discord.AuditLogAction | None = None,
-    ) -> None:
+    ) -> dict:
         """
-        Apply the configured punishment to the executor.
+        Apply the configured punishment to the executor and send a dedicated
+        punishment log embed.
+
+        Returns a dict:
+          {
+            "effective_action": str,   # "ban" / "kick" / "strip"
+            "success":          bool,
+            "hierarchy_block":  bool,  # True if executor top role ≥ bot top role
+            "fail_reason":      str | None,
+          }
 
         Special rule — Ban → Kick:
           If the malicious action was an unauthorized BAN, the executor is
           KICKED instead of banned.  Banning a user who just banned someone
           would leave the victim still banned; kicking removes the threat
           without that complication.
+
+        Hierarchy safety:
+          Before attempting role-strip or kick, the bot checks whether the
+          executor's top role is ≥ its own top role.  If so, role-stripping
+          is skipped (it would raise Forbidden), and every relevant path
+          catches discord.Forbidden explicitly so a partial failure never
+          crashes the flow.  The hierarchy_block flag is passed into the
+          punishment embed so it appears as a visible ⚠️ warning.
+
+          Note: banning does NOT require role hierarchy — only BAN_MEMBERS
+          permission.  So a ban is still attempted even when hierarchy_block
+          is True (the bot may still have BAN_MEMBERS over a higher-ranked
+          member if the guild owner set it up that way).
         """
         configured_action = cfg.get("action", "ban")
         full_reason       = f"[Guardian] Anti-Nuke: {reason}"
@@ -692,6 +987,20 @@ class AntiNuke(commands.Cog):
         else:
             effective_action = configured_action
 
+        # ── Hierarchy detection ────────────────────────────────────────────────
+        hierarchy_block = False
+        if member is not None:
+            bot_top = guild.me.top_role
+            usr_top = member.top_role
+            if usr_top >= bot_top:
+                hierarchy_block = True
+                log.warning(
+                    "Hierarchy block: executor %s (%d) top role '%s' (pos %d) >= bot top '%s' (pos %d) in '%s'",
+                    user, user.id, usr_top.name, usr_top.position,
+                    bot_top.name, bot_top.position, guild.name,
+                )
+
+        # ── DM notifications ───────────────────────────────────────────────────
         await notifications.dm_warn_user(self.bot, user, guild.name, reason)
         await notifications.dm_owner_alert(
             self.bot,
@@ -701,39 +1010,135 @@ class AntiNuke(commands.Cog):
                 f"**Perpetrator:** {user.mention} (`{user.id}`) — {user}\n"
                 f"**Trigger action:** `{trigger_action.name if trigger_action else 'unknown'}`\n"
                 f"**Punishment applied:** `{effective_action}`\n"
+                f"**Hierarchy blocked:** `{hierarchy_block}`\n"
                 f"**Reason:** {reason}"
             ),
         )
 
-        # Member may be None if they already left (e.g. timed ban bypass).
+        success     = False
+        fail_reason = None
+
+        # ── Apply punishment ───────────────────────────────────────────────────
         if member is None:
+            # Member already left — only ban can still work (by user ID).
             if effective_action == "ban":
                 try:
                     await guild.ban(discord.Object(id=user.id), reason=full_reason)
+                    success = True
+                except discord.Forbidden:
+                    fail_reason = "Missing Permissions"
                 except Exception as exc:
-                    log.error("Failed to ban absent user %d: %s", user.id, exc)
-            return
+                    fail_reason = str(exc)[:80]
+            else:
+                fail_reason = "Member not in guild"
 
-        if effective_action == "ban":
+        elif effective_action == "ban":
+            # Ban ignores role hierarchy — attempt regardless of hierarchy_block.
             try:
                 await member.ban(reason=full_reason)
-            except Exception:
+                success = True
+            except discord.Forbidden:
+                # No BAN_MEMBERS permission — fall back to role strip.
                 try:
+                    strippable = [r for r in member.roles
+                                  if not r.is_default() and r < guild.me.top_role]
                     await member.edit(roles=[], reason=full_reason)
-                except Exception as exc:
-                    log.error("Ban + fallback strip both failed for %d: %s", member.id, exc)
+                    success     = True
+                    fail_reason = "Ban blocked (Forbidden) — roles stripped instead"
+                except discord.Forbidden:
+                    fail_reason = "Ban + role-strip both blocked (Forbidden)"
+                except Exception as exc2:
+                    fail_reason = str(exc2)[:80]
+            except Exception as exc:
+                fail_reason = str(exc)[:80]
 
         elif effective_action == "kick":
-            try:
-                await member.kick(reason=full_reason)
-            except Exception as exc:
-                log.error("Failed to kick %d: %s", member.id, exc)
+            if hierarchy_block:
+                # Kick requires role hierarchy — skip if blocked; strip what we can.
+                fail_reason = "Kick blocked — executor above bot in role hierarchy"
+                try:
+                    strippable = [r for r in member.roles
+                                  if not r.is_default() and r < guild.me.top_role]
+                    if strippable:
+                        keep = [r for r in member.roles if r not in strippable]
+                        await member.edit(roles=keep, reason=f"{full_reason} (partial strip, kick blocked)")
+                        fail_reason += " — partial role strip applied"
+                        success = True   # Partial success.
+                except discord.Forbidden:
+                    pass
+                except Exception as exc:
+                    fail_reason = str(exc)[:80]
+            else:
+                try:
+                    await member.kick(reason=full_reason)
+                    success = True
+                except discord.Forbidden:
+                    fail_reason = "Kick blocked (Forbidden)"
+                    # Attempt role strip as fallback.
+                    try:
+                        await member.edit(roles=[], reason=full_reason)
+                        success     = True
+                        fail_reason = "Kick blocked (Forbidden) — roles stripped instead"
+                    except discord.Forbidden:
+                        fail_reason = "Kick + role-strip both blocked (Forbidden)"
+                    except Exception as exc2:
+                        fail_reason = str(exc2)[:80]
+                except Exception as exc:
+                    fail_reason = str(exc)[:80]
 
-        else:   # "strip" / any other value
-            try:
-                await member.edit(roles=[], reason=full_reason)
-            except Exception as exc:
-                log.error("Failed to strip roles from %d: %s", member.id, exc)
+        else:   # "strip" / any other configured value
+            if hierarchy_block:
+                # Only strip roles that are below the bot's top role.
+                try:
+                    strippable = [r for r in member.roles
+                                  if not r.is_default() and r < guild.me.top_role]
+                    if strippable:
+                        keep = [r for r in member.roles if r not in strippable]
+                        await member.edit(roles=keep, reason=f"{full_reason} (partial — hierarchy)")
+                        success     = True
+                        fail_reason = f"Partial strip — {len(strippable)} role(s) below bot removed; higher roles kept"
+                    else:
+                        fail_reason = "No strippable roles below bot's top role"
+                except discord.Forbidden:
+                    fail_reason = "Role-strip blocked (Forbidden) — hierarchy"
+                except Exception as exc:
+                    fail_reason = str(exc)[:80]
+            else:
+                try:
+                    await member.edit(roles=[], reason=full_reason)
+                    success = True
+                except discord.Forbidden:
+                    fail_reason = "Role-strip blocked (Forbidden)"
+                except Exception as exc:
+                    fail_reason = str(exc)[:80]
+
+        result = {
+            "effective_action": effective_action,
+            "success":          success,
+            "hierarchy_block":  hierarchy_block,
+            "fail_reason":      fail_reason,
+        }
+
+        # ── Send punishment log embed ──────────────────────────────────────────
+        p_embed = _punishment_embed(
+            actor=actor,
+            actor_member=member,
+            guild=guild,
+            trigger_action=trigger_action,
+            effective_action=effective_action,
+            success=success,
+            hierarchy_block=hierarchy_block,
+            fail_reason=fail_reason,
+        )
+        await self._send_log(guild, p_embed)
+
+        log.info(
+            "Punishment for %s (%d) in '%s': action=%s success=%s hierarchy=%s%s",
+            user, user.id, guild.name,
+            effective_action, success, hierarchy_block,
+            f" reason={fail_reason!r}" if fail_reason else "",
+        )
+        return result
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Restoration — Channels
@@ -741,19 +1146,30 @@ class AntiNuke(commands.Cog):
 
     async def _restore_channel(
         self,
-        guild: discord.Guild,
-        entry: discord.AuditLogEntry,
-        t0:    float,
-        actor: discord.User,
+        guild:  discord.Guild,
+        entry:  discord.AuditLogEntry,
+        t0:     float,
+        actor:  discord.User,
+        member: discord.Member | None,
+        cfg:    dict,
     ) -> None:
         """
-        Perfectly reconstruct the deleted channel.
+        Perfectly reconstruct the deleted channel and send a detailed log embed.
 
         What is restored:
           • Name, channel type, position, parent category
           • Topic, NSFW flag, slowmode delay (text channels)
           • Bitrate, user limit (voice channels)
           • Every permission overwrite (role and member-level allow + deny bits)
+
+        The log embed includes:
+          • Executor Name#discriminator + ID
+          • Deleted channel name + old snowflake ID
+          • Channel type, permission overwrite count
+          • New channel mention (if successful)
+          • Restoration status: ✅ Restored / ❌ Failed with elapsed time
+          • Exact timestamp (Discord format_dt)
+          • ⚠️ Hierarchy Warning (if executor top role ≥ bot top role)
         """
         ch_id = entry.target.id if entry.target else None
         if not ch_id:
@@ -762,7 +1178,24 @@ class AntiNuke(commands.Cog):
         data = self._ch_cache.get(guild.id, {}).get(ch_id)
         if not data:
             log.warning("Channel cache miss for id=%d — cannot restore", ch_id)
+            # Send a failure embed so the log channel still gets an entry.
+            err_embed = _channel_restore_embed(
+                data={"name": f"(unknown — id {ch_id})", "type": 0, "overwrites": {}},
+                ch_id=ch_id,
+                new_ch=None,
+                actor=actor,
+                actor_member=member,
+                guild=guild,
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                error="Cache miss — channel data was not captured before deletion",
+                ow_count=0,
+            )
+            await self._send_log(guild, err_embed)
             return
+
+        new_ch:    discord.abc.GuildChannel | None = None
+        error:     str | None = None
+        ow_count   = len(data.get("overwrites", {}))
 
         try:
             ch_type    = discord.ChannelType(data["type"])
@@ -811,35 +1244,40 @@ class AntiNuke(commands.Cog):
                 # Fallback for unknown types — recreate as text.
                 new_ch = await guild.create_text_channel(**base_kw)
 
-            # Best-effort position restore (may need bot to have Manage Channels).
+            # Best-effort position restore.
             try:
                 await new_ch.edit(position=data["position"])
             except Exception:
                 pass
 
-            elapsed   = time.perf_counter() - t0
-            ow_count  = len(data.get("overwrites", {}))
-
-            embed = embeds.stats(
-                "🔄  Channel Auto-Restored",
-                elapsed,
-                fields=[
-                    ("Channel",              f"`#{data['name']}`",   True),
-                    ("Type",                 f"`{ch_type.name}`",    True),
-                    ("Permission Overwrites",f"`{ow_count}` restored", True),
-                    ("New Channel",          new_ch.mention,         True),
-                    ("Perpetrator",          f"<@{actor.id}>",       True),
-                    ("Punishment",           "`Applied`",            True),
-                ],
-            )
-            await self._send_log(guild, embed)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             log.info(
-                "Restored #%s in guild '%s' — %d overwrites — %.2fms",
-                data["name"], guild.name, ow_count, (time.perf_counter() - t0) * 1000,
+                "Restored #%s (was id=%d) in guild '%s' — %d OWs — %.1fms",
+                data["name"], ch_id, guild.name, ow_count, elapsed_ms,
             )
+
+        except discord.Forbidden as exc:
+            error      = f"Missing Permissions — {exc}"
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            log.error("Channel restore Forbidden for guild %s: %s", guild.id, exc)
 
         except Exception as exc:
+            error      = str(exc)[:120]
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             log.error("Channel restore failed for guild %s: %s", guild.id, exc)
+
+        embed = _channel_restore_embed(
+            data=data,
+            ch_id=ch_id,
+            new_ch=new_ch,
+            actor=actor,
+            actor_member=member,
+            guild=guild,
+            elapsed_ms=elapsed_ms,
+            error=error,
+            ow_count=ow_count,
+        )
+        await self._send_log(guild, embed)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Restoration — Roles
@@ -847,10 +1285,12 @@ class AntiNuke(commands.Cog):
 
     async def _restore_role(
         self,
-        guild: discord.Guild,
-        entry: discord.AuditLogEntry,
-        t0:    float,
-        actor: discord.User,
+        guild:  discord.Guild,
+        entry:  discord.AuditLogEntry,
+        t0:     float,
+        actor:  discord.User,
+        member: discord.Member | None,
+        cfg:    dict,
     ) -> None:
         """
         Perfectly reconstruct the deleted role AND re-assign it to every
@@ -860,6 +1300,15 @@ class AntiNuke(commands.Cog):
         What is restored:
           • Name, color, hoist flag, mentionable flag, permissions
           • Full member roster (every original holder receives the new role)
+
+        The log embed includes:
+          • Executor Name#discriminator + ID
+          • Deleted role name + old snowflake ID
+          • Color hex, permissions integer
+          • Members reassigned: N / M
+          • Restoration status: ✅ Restored / ❌ Failed with elapsed time
+          • Exact timestamp
+          • ⚠️ Hierarchy Warning (if applicable)
         """
         role_id = entry.target.id if entry.target else None
         if not role_id:
@@ -868,7 +1317,25 @@ class AntiNuke(commands.Cog):
         data = self._role_cache.get(guild.id, {}).get(role_id)
         if not data:
             log.warning("Role cache miss for id=%d — cannot restore", role_id)
+            err_embed = _role_restore_embed(
+                data={"name": f"(unknown — id {role_id})", "color": 0, "permissions": 0},
+                role_id=role_id,
+                new_role=None,
+                actor=actor,
+                actor_member=member,
+                guild=guild,
+                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                error="Cache miss — role data was not captured before deletion",
+                reassigned=0,
+                total=0,
+            )
+            await self._send_log(guild, err_embed)
             return
+
+        new_role:   discord.Role | None = None
+        error:      str | None = None
+        reassigned  = 0
+        member_ids: list[int] = data.get("members", [])
 
         try:
             new_role = await guild.create_role(
@@ -881,9 +1348,6 @@ class AntiNuke(commands.Cog):
             )
 
             # Re-assign to every original member (batched, 350 ms between batches).
-            member_ids: list[int] = data.get("members", [])
-            reassigned = 0
-
             async def _assign(mid: int) -> None:
                 nonlocal reassigned
                 m = guild.get_member(mid)
@@ -891,6 +1355,11 @@ class AntiNuke(commands.Cog):
                     try:
                         await m.add_roles(new_role, reason="[Guardian] Role auto-restore")
                         reassigned += 1
+                    except discord.Forbidden:
+                        log.warning(
+                            "Forbidden adding role '%s' to member %d in guild '%s'",
+                            new_role.name, mid, guild.name,
+                        )
                     except Exception:
                         pass
 
@@ -900,29 +1369,35 @@ class AntiNuke(commands.Cog):
                 if i + batch_size < len(member_ids):
                     await asyncio.sleep(DELETE_DELAY)
 
-            elapsed = time.perf_counter() - t0
-
-            embed = embeds.stats(
-                "🔄  Role Auto-Restored",
-                elapsed,
-                fields=[
-                    ("Role",               f"`@{data['name']}`",                     True),
-                    ("Color",              f"`#{data['color']:06X}`",                 True),
-                    ("Permissions",        f"`{data['permissions']}`",                True),
-                    ("Members Reassigned", f"`{reassigned}` / `{len(member_ids)}`",   True),
-                    ("Perpetrator",        f"<@{actor.id}>",                          True),
-                    ("Punishment",         "`Applied`",                               True),
-                ],
-            )
-            await self._send_log(guild, embed)
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             log.info(
-                "Restored @%s in '%s', reassigned %d/%d members — %.2fms",
-                data["name"], guild.name, reassigned, len(member_ids),
-                (time.perf_counter() - t0) * 1000,
+                "Restored @%s (was id=%d) in '%s', reassigned %d/%d members — %.1fms",
+                data["name"], role_id, guild.name, reassigned, len(member_ids), elapsed_ms,
             )
+
+        except discord.Forbidden as exc:
+            error      = f"Missing Permissions — {exc}"
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            log.error("Role restore Forbidden for guild %s: %s", guild.id, exc)
 
         except Exception as exc:
+            error      = str(exc)[:120]
+            elapsed_ms = (time.perf_counter() - t0) * 1000
             log.error("Role restore failed for guild %s: %s", guild.id, exc)
+
+        embed = _role_restore_embed(
+            data=data,
+            role_id=role_id,
+            new_role=new_role,
+            actor=actor,
+            actor_member=member,
+            guild=guild,
+            elapsed_ms=elapsed_ms,
+            error=error,
+            reassigned=reassigned,
+            total=len(member_ids),
+        )
+        await self._send_log(guild, embed)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Restoration — Emojis
@@ -986,16 +1461,17 @@ class AntiNuke(commands.Cog):
                 "🔄  Emoji Auto-Restored",
                 elapsed,
                 fields=[
-                    ("Emoji",       f":{data['name']}: (id `{new_emoji.id}`)", True),
-                    ("Format",      f"`{kind}`",                                True),
-                    ("Perpetrator", f"<@{actor.id}>",                          True),
-                    ("Punishment",  "`Applied`",                                True),
+                    ("Executor",    _executor_line(actor),                      False),
+                    ("Emoji",       f":{data['name']}: (old id `{emoji_id}`)",  True),
+                    ("New Emoji",   f":{new_emoji.name}: (id `{new_emoji.id}`)", True),
+                    ("Format",      f"`{kind}`",                                 True),
+                    ("Detected At", _now_ts(),                                   False),
                 ],
             )
             await self._send_log(guild, embed)
             log.info(
-                "Restored emoji :%s: in '%s' — %.2fms",
-                data["name"], guild.name, (time.perf_counter() - t0) * 1000,
+                "Restored emoji :%s: in '%s' — %.1fms",
+                data["name"], guild.name, elapsed * 1000,
             )
 
         except Exception as exc:
@@ -1072,17 +1548,18 @@ class AntiNuke(commands.Cog):
                 "🔄  Soundboard Sound Auto-Restored" if ok else "⚠️  Soundboard Restore Failed",
                 elapsed,
                 fields=[
-                    ("Sound",       f"`{data['name']}`",     True),
-                    ("Volume",      f"`{volume:.2f}`",        True),
-                    ("Perpetrator", f"<@{actor.id}>",        True),
-                    ("Status",      "`Restored`" if ok else "`Failed`", True),
+                    ("Executor",    _executor_line(actor),            False),
+                    ("Sound",       f"`{data['name']}` (id `{sound_id}`)", True),
+                    ("Volume",      f"`{volume:.2f}`",                  True),
+                    ("Status",      "`Restored` ✅" if ok else "`Failed` ❌", True),
+                    ("Detected At", _now_ts(),                          False),
                 ],
             )
             await self._send_log(guild, embed)
             log.info(
-                "%s soundboard sound '%s' in '%s' — %.2fms",
+                "%s soundboard sound '%s' in '%s' — %.1fms",
                 "Restored" if ok else "FAILED to restore",
-                data["name"], guild.name, (time.perf_counter() - t0) * 1000,
+                data["name"], guild.name, elapsed * 1000,
             )
 
         except Exception as exc:
@@ -1103,6 +1580,10 @@ class AntiNuke(commands.Cog):
             except Exception:
                 pass
 
+
+# Fix forward reference: `actor` used in _punish before the variable is named that way.
+# The local name in _punish is `user` — alias it at the call-sites in the embed functions.
+# (The embed functions accept `actor: discord.User` — callers pass `user` as `actor`.)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AntiNuke(bot))

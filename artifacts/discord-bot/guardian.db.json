@@ -11,7 +11,7 @@
   "config": {
     "prefix": "+",
     "antinuke": {
-      "enabled": false,
+      "enabled": true,
       "threshold": 5,
       "interval": 3,
       "action": "quarantine"
@@ -63,7 +63,7 @@
     }
   },
   "logs": {
-    "channelId": 1529297008093823066
+    "channelId": 1516504302947012801
   },
   "quarantine": {
     "users": {},
