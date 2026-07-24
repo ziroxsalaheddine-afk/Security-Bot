@@ -23,6 +23,17 @@ args = "cd artifacts/discord-bot && python main.py"
 outputType = "console"
 
 [[workflows.workflow]]
+name = "Security Bot"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd artifacts/security-bot && python main.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
 name = "Start application"
 author = "agent"
 
