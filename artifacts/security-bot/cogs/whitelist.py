@@ -1,10 +1,11 @@
 """
 Whitelist Cog — Dual user+role whitelist with per-guild isolation.
+No emojis in any user-facing text.
 
 Commands:
-  +wl                        — list all whitelisted users and roles
-  +wl @user/@role            — add a user or role to the whitelist
-  +wl remove @user/@role     — remove a user or role from the whitelist
+  +wl                      — list whitelisted users and roles
+  +wl @user / @role        — add a user or role to the bypass list
+  +wl remove @user / @role — remove from bypass list
 """
 
 from __future__ import annotations
@@ -16,12 +17,12 @@ import discord
 from discord.ext import commands
 
 from database import Database
-from utils import error_embed, info_embed, is_whitelisted, success_embed, warn_embed
+from utils import FOOTER, error_embed, info_embed, success_embed, warn_embed
 
-log = logging.getLogger("secbot.whitelist")
+log = logging.getLogger("trossard.whitelist")
 
 
-def _require_admin(ctx: commands.Context) -> bool:
+def _is_admin(ctx: commands.Context) -> bool:
     return (
         ctx.author.id == ctx.guild.owner_id
         or ctx.author.guild_permissions.administrator
@@ -43,28 +44,29 @@ class Whitelist(commands.Cog):
         target: Union[discord.Member, discord.Role] = None,
     ) -> None:
         """
-        +wl                 → show current whitelist
-        +wl @user/@role     → add to whitelist
+        +wl              — show current whitelist
+        +wl @user/@role  — add to whitelist
         """
-        if not _require_admin(ctx):
+        if not _is_admin(ctx):
             return await ctx.send(
-                embed=error_embed("Permission Denied", "Administrator permission required."),
+                embed=error_embed("Permission Denied", "Administrator permission is required."),
                 delete_after=8,
             )
 
         if target is None:
             return await self._show_list(ctx)
 
-        # Add target to whitelist.
         kind = "user" if isinstance(target, discord.Member) else "role"
         await self.db.wl_add(ctx.guild.id, target.id, kind)
 
-        label = target.mention
-        log.info("Whitelist add: guild=%d %s=%d by %s", ctx.guild.id, kind, target.id, ctx.author)
+        log.info(
+            "Whitelist add: guild=%d %s=%d by %s",
+            ctx.guild.id, kind, target.id, ctx.author,
+        )
         await ctx.send(
             embed=success_embed(
                 "Whitelist Updated",
-                f"{label} (`{target.id}`) has been added to the **{kind}** whitelist.",
+                f"{target.mention} (ID: `{target.id}`) has been added to the **{kind}** whitelist.",
             )
         )
 
@@ -77,10 +79,9 @@ class Whitelist(commands.Cog):
         ctx: commands.Context,
         target: Union[discord.Member, discord.Role],
     ) -> None:
-        """Remove a user or role from the whitelist."""
-        if not _require_admin(ctx):
+        if not _is_admin(ctx):
             return await ctx.send(
-                embed=error_embed("Permission Denied", "Administrator permission required."),
+                embed=error_embed("Permission Denied", "Administrator permission is required."),
                 delete_after=8,
             )
 
@@ -96,47 +97,49 @@ class Whitelist(commands.Cog):
                 delete_after=8,
             )
 
-        log.info("Whitelist remove: guild=%d %s=%d by %s", ctx.guild.id, kind, target.id, ctx.author)
+        log.info(
+            "Whitelist remove: guild=%d %s=%d by %s",
+            ctx.guild.id, kind, target.id, ctx.author,
+        )
         await ctx.send(
             embed=success_embed(
                 "Whitelist Updated",
-                f"{target.mention} has been **removed** from the {kind} whitelist.",
+                f"{target.mention} has been removed from the {kind} whitelist.",
             )
         )
 
-    # ── Display helper ────────────────────────────────────────────────────────
+    # ── List display ──────────────────────────────────────────────────────────
 
     async def _show_list(self, ctx: commands.Context) -> None:
         rows = await self.db.wl_list(ctx.guild.id)
-
         users = [r for r in rows if r["target_type"] == "user"]
         roles = [r for r in rows if r["target_type"] == "role"]
 
         embed = discord.Embed(
-            title="🛡️  Server Whitelist",
+            title="Server Whitelist",
             color=0x5865F2,
         )
-        embed.set_footer(text=f"Security Bot • {ctx.guild.name}")
+        embed.set_footer(text=FOOTER)
 
         if users:
             lines = []
             for row in users:
                 member = ctx.guild.get_member(row["target_id"])
                 label = member.mention if member else f"`{row['target_id']}`"
-                lines.append(f"• {label}")
-            embed.add_field(name="👤 Whitelisted Users", value="\n".join(lines), inline=False)
+                lines.append(f"- {label}")
+            embed.add_field(name="Whitelisted Users", value="\n".join(lines), inline=False)
         else:
-            embed.add_field(name="👤 Whitelisted Users", value="*None configured.*", inline=False)
+            embed.add_field(name="Whitelisted Users", value="None configured.", inline=False)
 
         if roles:
             lines = []
             for row in roles:
                 role = ctx.guild.get_role(row["target_id"])
                 label = role.mention if role else f"`{row['target_id']}`"
-                lines.append(f"• {label}")
-            embed.add_field(name="🏷️ Whitelisted Roles", value="\n".join(lines), inline=False)
+                lines.append(f"- {label}")
+            embed.add_field(name="Whitelisted Roles", value="\n".join(lines), inline=False)
         else:
-            embed.add_field(name="🏷️ Whitelisted Roles", value="*None configured.*", inline=False)
+            embed.add_field(name="Whitelisted Roles", value="None configured.", inline=False)
 
         embed.description = (
             f"**{len(users)}** user(s) and **{len(roles)}** role(s) whitelisted.\n"
@@ -148,24 +151,30 @@ class Whitelist(commands.Cog):
 
     @whitelist.error
     async def _wl_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, (commands.MemberNotFound, commands.RoleNotFound, commands.BadUnionArgument)):
+        if isinstance(
+            error,
+            (commands.MemberNotFound, commands.RoleNotFound, commands.BadUnionArgument),
+        ):
             await ctx.send(
                 embed=error_embed(
                     "Invalid Target",
-                    "Could not find that user or role. Mention them or use their ID.\n"
-                    "**Usage:** `+wl @user` or `+wl @role`",
+                    "Could not find that user or role. Mention them directly or use their ID.\n"
+                    "Usage: `+wl @user` or `+wl @role`",
                 ),
                 delete_after=10,
             )
 
     @whitelist_remove.error
     async def _wl_remove_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
-        if isinstance(error, (commands.MemberNotFound, commands.RoleNotFound, commands.BadUnionArgument)):
+        if isinstance(
+            error,
+            (commands.MemberNotFound, commands.RoleNotFound, commands.BadUnionArgument),
+        ):
             await ctx.send(
                 embed=error_embed(
                     "Invalid Target",
                     "Could not find that user or role.\n"
-                    "**Usage:** `+wl remove @user` or `+wl remove @role`",
+                    "Usage: `+wl remove @user` or `+wl remove @role`",
                 ),
                 delete_after=10,
             )

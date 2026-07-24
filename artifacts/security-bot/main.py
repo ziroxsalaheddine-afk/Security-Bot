@@ -1,9 +1,8 @@
 """
-Security Bot — Entry point.
+Trossard — Production Discord Security Bot.
 
 Loads all cogs, initialises the SQLite database, then connects to Discord.
-The DISCORD_TOKEN environment variable is read from the Replit Secret of the
-same name (shared with the Guardian Bot workflow).
+DISCORD_TOKEN is read from the environment (Replit Secret).
 """
 
 from __future__ import annotations
@@ -25,9 +24,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
-log = logging.getLogger("secbot")
+log = logging.getLogger("trossard")
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+# ── Config ────────────────────────────────────────────────────────────────────
 PREFIX = "+"
 TOKEN = os.environ.get("DISCORD_TOKEN", "")
 
@@ -41,22 +40,22 @@ COGS = [
 
 # ── Bot subclass ──────────────────────────────────────────────────────────────
 
-class SecurityBot(commands.Bot):
+class Trossard(commands.Bot):
     db: Database
 
     def __init__(self) -> None:
         intents = discord.Intents.default()
+        intents.guilds = True
         intents.members = True
+        intents.messages = True
         intents.message_content = True
+        intents.moderation = True
 
         super().__init__(
             command_prefix=PREFIX,
             intents=intents,
-            # Suppress the built-in help command so our +help cog takes over.
-            help_command=None,
+            help_command=None,  # replaced by our custom +help cog
         )
-
-    # ── Setup hook — runs before the bot connects ─────────────────────────────
 
     async def setup_hook(self) -> None:
         self.db = Database()
@@ -70,11 +69,12 @@ class SecurityBot(commands.Bot):
             except Exception as exc:
                 log.error("Failed to load cog %s: %s", cog, exc, exc_info=True)
 
-    # ── Events ────────────────────────────────────────────────────────────────
-
     async def on_ready(self) -> None:
         if self.user:
-            log.info("Security Bot ready — logged in as %s (ID: %d)", self.user, self.user.id)
+            log.info(
+                "Trossard ready — logged in as %s (ID: %d)",
+                self.user, self.user.id,
+            )
             log.info("Serving %d guild(s).", len(self.guilds))
         await self.change_presence(
             activity=discord.Activity(
@@ -95,18 +95,16 @@ class SecurityBot(commands.Bot):
     async def on_command_error(
         self, ctx: commands.Context, error: commands.CommandError
     ) -> None:
-        # Silently ignore unknown commands so the bot doesn't spam errors.
         if isinstance(error, commands.CommandNotFound):
             return
-        # For everything else, propagate to the cog-level error handler.
-        # If there's no cog handler, log it.
         if hasattr(ctx.command, "on_error"):
             return
         if ctx.cog and commands.Cog._get_overridden_hook(ctx.cog.cog_command_error):
             return
-        log.error("Unhandled command error in %s: %s", ctx.command, error, exc_info=error)
-
-    # ── Teardown ──────────────────────────────────────────────────────────────
+        log.error(
+            "Unhandled command error in %s: %s",
+            ctx.command, error, exc_info=error,
+        )
 
     async def close(self) -> None:
         log.info("Shutting down — closing database connection.")
@@ -124,7 +122,7 @@ async def main() -> None:
         )
         sys.exit(1)
 
-    bot = SecurityBot()
+    bot = Trossard()
     async with bot:
         await bot.start(TOKEN)
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import aiosqlite
 
-log = logging.getLogger("secbot.db")
+log = logging.getLogger("trossard.db")
 
 DB_PATH = Path(__file__).parent / "security_bot.db"
 
@@ -41,18 +41,11 @@ CREATE TABLE IF NOT EXISTS role_cache (
     role_id  INTEGER NOT NULL,
     PRIMARY KEY (guild_id, user_id, role_id)
 );
-
-CREATE TABLE IF NOT EXISTS server_settings (
-    guild_id INTEGER NOT NULL,
-    feature  TEXT    NOT NULL,
-    status   INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (guild_id, feature)
-);
 """
 
 
 class Database:
-    """Single shared aiosqlite connection used throughout the bot's lifetime."""
+    """Single shared aiosqlite connection used throughout the bot lifetime."""
 
     def __init__(self) -> None:
         self._conn: aiosqlite.Connection | None = None
@@ -110,7 +103,8 @@ class Database:
 
     async def wl_list(self, guild_id: int):
         return await self._fetchall(
-            "SELECT target_id, target_type FROM whitelist WHERE guild_id=? ORDER BY target_type, target_id",
+            "SELECT target_id, target_type FROM whitelist "
+            "WHERE guild_id=? ORDER BY target_type, target_id",
             (guild_id,),
         )
 
@@ -180,11 +174,10 @@ class Database:
         self, guild_id: int, user_id: int, role_ids: list[int]
     ) -> None:
         """Atomically replace a member's cached role list."""
-        async with self._conn.execute(
+        await self._conn.execute(
             "DELETE FROM role_cache WHERE guild_id=? AND user_id=?",
             (guild_id, user_id),
-        ):
-            pass
+        )
         if role_ids:
             await self._conn.executemany(
                 "INSERT OR IGNORE INTO role_cache VALUES (?, ?, ?)",
@@ -205,24 +198,7 @@ class Database:
     async def role_cache_update_role_id(
         self, guild_id: int, old_role_id: int, new_role_id: int
     ) -> None:
-        """Swap the old role ID for the newly recreated one in the cache."""
         await self._exec(
             "UPDATE role_cache SET role_id=? WHERE guild_id=? AND role_id=?",
             (new_role_id, guild_id, old_role_id),
-        )
-
-    # ── Server settings ───────────────────────────────────────────────────────
-
-    async def setting_get(self, guild_id: int, feature: str, default: int = 1) -> int:
-        row = await self._fetchone(
-            "SELECT status FROM server_settings WHERE guild_id=? AND feature=?",
-            (guild_id, feature),
-        )
-        return row["status"] if row else default
-
-    async def setting_set(self, guild_id: int, feature: str, status: int) -> None:
-        await self._exec(
-            "INSERT INTO server_settings VALUES (?, ?, ?) "
-            "ON CONFLICT (guild_id, feature) DO UPDATE SET status=excluded.status",
-            (guild_id, feature, status),
         )

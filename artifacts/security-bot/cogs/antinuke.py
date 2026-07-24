@@ -1,22 +1,23 @@
 """
-Anti-Nuke Cog — Role & Channel restoration with per-guild whitelist checks.
+Anti-Nuke Cog — Role and channel restoration with per-guild whitelist checks.
+No emojis in any user-facing text.
 
 Role cache:
   - Background task syncs all guild members' roles into SQLite every 5 minutes.
-  - on_member_update patches individual members' cache entries instantly.
+  - on_member_update patches individual members' cache entries immediately.
   - on_guild_join triggers an immediate full sync for the new guild.
 
 Role restore (on_guild_role_delete):
   - Checks audit log to identify the executor.
-  - If executor IS whitelisted → skip (trusted action).
-  - If executor is NOT whitelisted → recreate the role with identical properties,
-    fetch the member list from role_cache, re-assign the role to every member,
-    update the cache with the new role ID, and log a warning embed.
+  - Whitelisted executor — skip (trusted action).
+  - Non-whitelisted executor — recreate the role with identical properties,
+    fetch member list from role_cache, re-assign the role to each member,
+    update cache with the new role ID, and post a log embed.
 
 Channel restore (on_guild_channel_delete):
-  - Same whitelist check logic.
-  - Recreates the channel preserving: name, type, topic, category, overwrites,
-    slowmode, NSFW flag, bitrate/user_limit (voice), position.
+  - Same whitelist logic.
+  - Recreates the channel preserving: name, type, topic, category,
+    overwrites, slowmode, NSFW, bitrate/user_limit (voice), position.
 """
 
 from __future__ import annotations
@@ -29,12 +30,11 @@ import discord
 from discord.ext import commands, tasks
 
 from database import Database
-from utils import get_audit_executor, is_whitelisted, warn_embed
+from utils import get_audit_executor, is_whitelisted, log_embed, send_log
 
-log = logging.getLogger("secbot.antinuke")
+log = logging.getLogger("trossard.antinuke")
 
-# Seconds to wait between member role-reassignments to respect rate limits.
-_REASSIGN_DELAY = 0.30
+_REASSIGN_DELAY = 0.30  # seconds between role re-assignments
 
 
 class AntiNuke(commands.Cog):
@@ -47,7 +47,7 @@ class AntiNuke(commands.Cog):
         self._sync_task.cancel()
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  Role cache — background sync (every 5 min) + per-event updates
+    #  Role cache — background sync + per-event patch
     # ══════════════════════════════════════════════════════════════════════════
 
     @tasks.loop(minutes=5)
@@ -60,7 +60,6 @@ class AntiNuke(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _sync_guild(self, guild: discord.Guild) -> None:
-        """Fully rebuild the role_cache for one guild."""
         if not guild.chunked:
             try:
                 await guild.chunk(cache=True)
@@ -74,13 +73,17 @@ class AntiNuke(commands.Cog):
             if role_ids:
                 await self.db.role_cache_sync_member(guild.id, member.id, role_ids)
 
-        log.debug("Role cache synced: guild=%d members=%d", guild.id, guild.member_count)
+        log.debug(
+            "Role cache synced: guild=%d members=%d",
+            guild.id, guild.member_count,
+        )
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        # Sync all guilds immediately on (re)connect.
-        await asyncio.gather(*[self._sync_guild(g) for g in self.bot.guilds],
-                             return_exceptions=True)
+        await asyncio.gather(
+            *[self._sync_guild(g) for g in self.bot.guilds],
+            return_exceptions=True,
+        )
         log.info("Initial role cache sync complete (%d guild(s)).", len(self.bot.guilds))
 
     @commands.Cog.listener()
@@ -89,7 +92,6 @@ class AntiNuke(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
-        """Patch the cache immediately when a member's roles change."""
         if before.roles == after.roles:
             return
         role_ids = [r.id for r in after.roles if not r.is_default()]
@@ -104,18 +106,21 @@ class AntiNuke(commands.Cog):
         guild = role.guild
         t0 = time.perf_counter()
 
-        executor = await get_audit_executor(guild, discord.AuditLogAction.role_delete, role.id)
+        executor = await get_audit_executor(
+            guild, discord.AuditLogAction.role_delete, role.id
+        )
 
-        # Skip if executor is whitelisted or is the bot itself.
         if executor:
             if executor.id == self.bot.user.id:
                 return
             member = guild.get_member(executor.id)
             if member and await is_whitelisted(self.db, guild, member):
-                log.debug("Whitelisted executor %s deleted role %r — skipping restore.", executor, role.name)
+                log.debug(
+                    "Whitelisted executor %s deleted role %r — skipping restore.",
+                    executor, role.name,
+                )
                 return
 
-        # ── Recreate the role ─────────────────────────────────────────────────
         new_role: discord.Role | None = None
         error: str | None = None
 
@@ -126,21 +131,26 @@ class AntiNuke(commands.Cog):
                 hoist=role.hoist,
                 mentionable=role.mentionable,
                 permissions=role.permissions,
-                reason="[Security Bot] Anti-Nuke: auto-restored deleted role",
+                reason="[Trossard] Anti-Nuke: auto-restored deleted role",
             )
-            # Best-effort position restore.
             try:
                 await new_role.edit(position=max(1, role.position))
             except Exception:
                 pass
         except discord.Forbidden as exc:
             error = f"Missing Permissions — {exc}"
-            log.error("Role restore forbidden: guild=%d role=%r: %s", guild.id, role.name, exc)
+            log.error(
+                "Role restore forbidden: guild=%d role=%r: %s",
+                guild.id, role.name, exc,
+            )
         except Exception as exc:
             error = str(exc)[:120]
-            log.error("Role restore failed: guild=%d role=%r: %s", guild.id, role.name, exc)
+            log.error(
+                "Role restore failed: guild=%d role=%r: %s",
+                guild.id, role.name, exc,
+            )
 
-        # ── Re-assign to original members ─────────────────────────────────────
+        # Re-assign to original members.
         reassigned = 0
         member_ids = await self.db.role_cache_get_members(guild.id, role.id)
 
@@ -150,7 +160,10 @@ class AntiNuke(commands.Cog):
                 if m is None:
                     continue
                 try:
-                    await m.add_roles(new_role, reason="[Security Bot] Role restore — original member")
+                    await m.add_roles(
+                        new_role,
+                        reason="[Trossard] Role restore — original member",
+                    )
                     reassigned += 1
                 except discord.Forbidden:
                     log.warning("Forbidden adding role to member %d", uid)
@@ -158,30 +171,26 @@ class AntiNuke(commands.Cog):
                     log.debug("Role re-assign failed for %d: %s", uid, exc)
                 await asyncio.sleep(_REASSIGN_DELAY)
 
-            # Swap the cached role ID from old → new.
             await self.db.role_cache_update_role_id(guild.id, role.id, new_role.id)
 
         elapsed = (time.perf_counter() - t0) * 1000
         log.info(
             "Role restore: guild=%d role=%r new_id=%s members=%d/%d elapsed=%.1fms",
             guild.id, role.name,
-            new_role.id if new_role else "—",
+            new_role.id if new_role else "none",
             reassigned, len(member_ids), elapsed,
         )
 
-        # ── Log embed ─────────────────────────────────────────────────────────
-        await self._log(
-            guild,
-            self._role_restore_embed(
-                role=role,
-                new_role=new_role,
-                executor=executor,
-                error=error,
-                reassigned=reassigned,
-                total=len(member_ids),
-                elapsed_ms=elapsed,
-            ),
+        embed = self._role_restore_embed(
+            role=role,
+            new_role=new_role,
+            executor=executor,
+            error=error,
+            reassigned=reassigned,
+            total=len(member_ids),
+            elapsed_ms=elapsed,
         )
+        await send_log(guild, embed)
 
     def _role_restore_embed(
         self,
@@ -195,22 +204,37 @@ class AntiNuke(commands.Cog):
         elapsed_ms: float,
     ) -> discord.Embed:
         restored = new_role is not None and error is None
-        embed = discord.Embed(
-            title="🔄  Role Auto-Restored" if restored else "❌  Role Restore Failed",
-            color=0x2ECC71 if restored else 0xE74C3C,
-            timestamp=discord.utils.utcnow(),
+        embed = log_embed(
+            "Role Auto-Restored" if restored else "Role Restore Failed",
         )
-        embed.add_field(name="Deleted Role", value=f"`@{role.name}` (ID `{role.id}`)", inline=True)
-        embed.add_field(name="New Role", value=new_role.mention if new_role else "`—`", inline=True)
+        embed.color = 0x2ECC71 if restored else 0xE74C3C
+        embed.timestamp = discord.utils.utcnow()
+        embed.add_field(
+            name="Deleted Role",
+            value=f"`@{role.name}` (ID: `{role.id}`)",
+            inline=True,
+        )
+        embed.add_field(
+            name="New Role",
+            value=new_role.mention if new_role else "`—`",
+            inline=True,
+        )
         embed.add_field(
             name="Executor",
-            value=f"{executor} (`{executor.id}`)" if executor else "*Unknown*",
+            value=f"{executor} (`{executor.id}`)" if executor else "Unknown",
             inline=False,
         )
-        embed.add_field(name="Members Re-assigned", value=f"`{reassigned}` / `{total}`", inline=True)
-        status = f"✅ Restored in `{elapsed_ms:.0f}ms`" if restored else f"❌ Failed — `{error}`"
+        embed.add_field(
+            name="Members Re-assigned",
+            value=f"`{reassigned}` / `{total}`",
+            inline=True,
+        )
+        status = (
+            f"Restored in `{elapsed_ms:.0f}ms`"
+            if restored
+            else f"Failed — `{error}`"
+        )
         embed.add_field(name="Status", value=status, inline=True)
-        embed.set_footer(text="Security Bot • Anti-Nuke")
         return embed
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -218,18 +242,25 @@ class AntiNuke(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     @commands.Cog.listener()
-    async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel) -> None:
+    async def on_guild_channel_delete(
+        self, channel: discord.abc.GuildChannel
+    ) -> None:
         guild = channel.guild
         t0 = time.perf_counter()
 
-        executor = await get_audit_executor(guild, discord.AuditLogAction.channel_delete, channel.id)
+        executor = await get_audit_executor(
+            guild, discord.AuditLogAction.channel_delete, channel.id
+        )
 
         if executor:
             if executor.id == self.bot.user.id:
                 return
             member = guild.get_member(executor.id)
             if member and await is_whitelisted(self.db, guild, member):
-                log.debug("Whitelisted executor %s deleted channel %r — skipping restore.", executor, channel.name)
+                log.debug(
+                    "Whitelisted executor %s deleted channel %r — skipping restore.",
+                    executor, channel.name,
+                )
                 return
 
         new_ch: discord.abc.GuildChannel | None = None
@@ -239,45 +270,46 @@ class AntiNuke(commands.Cog):
             new_ch = await self._recreate_channel(channel)
         except discord.Forbidden as exc:
             error = f"Missing Permissions — {exc}"
-            log.error("Channel restore forbidden: guild=%d ch=%r: %s", guild.id, channel.name, exc)
+            log.error(
+                "Channel restore forbidden: guild=%d ch=%r: %s",
+                guild.id, channel.name, exc,
+            )
         except Exception as exc:
             error = str(exc)[:120]
-            log.error("Channel restore failed: guild=%d ch=%r: %s", guild.id, channel.name, exc)
+            log.error(
+                "Channel restore failed: guild=%d ch=%r: %s",
+                guild.id, channel.name, exc,
+            )
 
         elapsed = (time.perf_counter() - t0) * 1000
         log.info(
             "Channel restore: guild=%d ch=%r new_id=%s elapsed=%.1fms",
             guild.id, channel.name,
-            new_ch.id if new_ch else "—", elapsed,
+            new_ch.id if new_ch else "none",
+            elapsed,
         )
 
-        await self._log(
-            guild,
-            self._channel_restore_embed(
-                channel=channel,
-                new_ch=new_ch,
-                executor=executor,
-                error=error,
-                elapsed_ms=elapsed,
-            ),
+        embed = self._channel_restore_embed(
+            channel=channel,
+            new_ch=new_ch,
+            executor=executor,
+            error=error,
+            elapsed_ms=elapsed,
         )
+        await send_log(guild, embed)
 
     async def _recreate_channel(
         self, ch: discord.abc.GuildChannel
     ) -> discord.abc.GuildChannel:
-        """Recreate a deleted channel preserving all properties."""
         guild = ch.guild
-        reason = "[Security Bot] Anti-Nuke: auto-restored deleted channel"
-        overwrites = ch.overwrites
-
+        reason = "[Trossard] Anti-Nuke: auto-restored deleted channel"
         base: dict = dict(
             name=ch.name,
-            overwrites=overwrites,
+            overwrites=ch.overwrites,
             reason=reason,
         )
-        category = ch.category if ch.category else None
-        if category:
-            base["category"] = category
+        if ch.category:
+            base["category"] = ch.category
 
         if isinstance(ch, discord.TextChannel):
             new_ch = await guild.create_text_channel(
@@ -295,7 +327,7 @@ class AntiNuke(commands.Cog):
         elif isinstance(ch, discord.CategoryChannel):
             new_ch = await guild.create_category(
                 name=ch.name,
-                overwrites=overwrites,
+                overwrites=ch.overwrites,
                 reason=reason,
             )
         elif isinstance(ch, discord.StageChannel):
@@ -303,10 +335,8 @@ class AntiNuke(commands.Cog):
         elif isinstance(ch, discord.ForumChannel):
             new_ch = await guild.create_forum(**base, topic=ch.topic or "")
         else:
-            # Fallback: recreate as text channel.
             new_ch = await guild.create_text_channel(**base)
 
-        # Best-effort position restore.
         try:
             await new_ch.edit(position=ch.position)
         except Exception:
@@ -325,37 +355,34 @@ class AntiNuke(commands.Cog):
     ) -> discord.Embed:
         restored = new_ch is not None and error is None
         ch_type = channel.type.name.replace("_", " ").title()
-        embed = discord.Embed(
-            title="🔄  Channel Auto-Restored" if restored else "❌  Channel Restore Failed",
-            color=0x2ECC71 if restored else 0xE74C3C,
-            timestamp=discord.utils.utcnow(),
+        embed = log_embed(
+            "Channel Auto-Restored" if restored else "Channel Restore Failed",
         )
-        embed.add_field(name="Deleted Channel", value=f"`#{channel.name}` (ID `{channel.id}`)", inline=True)
+        embed.color = 0x2ECC71 if restored else 0xE74C3C
+        embed.timestamp = discord.utils.utcnow()
+        embed.add_field(
+            name="Deleted Channel",
+            value=f"`#{channel.name}` (ID: `{channel.id}`)",
+            inline=True,
+        )
         embed.add_field(name="Type", value=f"`{ch_type}`", inline=True)
-        embed.add_field(name="New Channel", value=new_ch.mention if new_ch else "`—`", inline=True)
+        embed.add_field(
+            name="New Channel",
+            value=new_ch.mention if new_ch else "`—`",
+            inline=True,
+        )
         embed.add_field(
             name="Executor",
-            value=f"{executor} (`{executor.id}`)" if executor else "*Unknown*",
+            value=f"{executor} (`{executor.id}`)" if executor else "Unknown",
             inline=False,
         )
-        status = f"✅ Restored in `{elapsed_ms:.0f}ms`" if restored else f"❌ Failed — `{error}`"
+        status = (
+            f"Restored in `{elapsed_ms:.0f}ms`"
+            if restored
+            else f"Failed — `{error}`"
+        )
         embed.add_field(name="Status", value=status, inline=False)
-        embed.set_footer(text="Security Bot • Anti-Nuke")
         return embed
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  Log channel helper
-    # ══════════════════════════════════════════════════════════════════════════
-
-    async def _log(self, guild: discord.Guild, embed: discord.Embed) -> None:
-        """Send embed to the first text channel the bot can write to."""
-        for ch in guild.text_channels:
-            if ch.permissions_for(guild.me).send_messages:
-                try:
-                    await ch.send(embed=embed)
-                except Exception:
-                    pass
-                return
 
 
 async def setup(bot: commands.Bot) -> None:

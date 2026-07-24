@@ -1,17 +1,17 @@
 """
-Danger Cog — Unauthorized role assignment protection & mass-mention blocking.
+Danger Cog — Unauthorized role assignment protection and mass-mention blocking.
+No emojis in any user-facing text.
 
-Danger Roles (+danger roles …):
-  - Marks specific roles as "protected".
-  - on_member_update: when a protected role (or any Administrator role) is
-    granted by an unauthorized executor, the role is immediately stripped from
-    the recipient and a warning is posted.
+Danger Roles (+danger roles ...):
+  - Marks specific roles as protected.
+  - on_member_update: if a protected role (or any Administrator role) is granted
+    by a non-whitelisted executor, it is immediately stripped from the recipient
+    and a security alert is posted.
 
-Danger Tags (+danger tag …):
-  - Maintains a per-guild list of users permitted to use @everyone / @here.
-  - on_message: if a message contains a mass mention (@everyone or @here) and
-    the author is neither whitelisted nor in danger_tags, the message is deleted
-    instantly and a temporary warning is sent.
+Danger Tags (+danger tag ...):
+  - Per-guild allowlist of users permitted to use @everyone / @here.
+  - on_message: if a mass mention appears from an unauthorized user, the message
+    is deleted instantly and a 5-second temporary warning is posted.
 """
 
 from __future__ import annotations
@@ -22,9 +22,19 @@ import discord
 from discord.ext import commands
 
 from database import Database
-from utils import error_embed, get_audit_executor, info_embed, is_whitelisted, success_embed, warn_embed
+from utils import (
+    error_embed,
+    get_audit_executor,
+    info_embed,
+    is_whitelisted,
+    log_embed,
+    send_log,
+    success_embed,
+    warn_embed,
+    FOOTER,
+)
 
-log = logging.getLogger("secbot.danger")
+log = logging.getLogger("trossard.danger")
 
 
 class Danger(commands.Cog):
@@ -33,83 +43,88 @@ class Danger(commands.Cog):
         self.db: Database = bot.db  # type: ignore[attr-defined]
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  +danger — top-level group
+    #  +danger
     # ══════════════════════════════════════════════════════════════════════════
 
     @commands.group(name="danger", invoke_without_command=True)
     @commands.guild_only()
     @commands.has_permissions(administrator=True)
     async def danger(self, ctx: commands.Context) -> None:
-        embed = info_embed(
-            "Danger Module",
-            "**Subcommands:**\n"
-            "`+danger roles` — manage protected/admin roles\n"
-            "`+danger tag` — manage who may use @everyone / @here\n\n"
-            "Use `+help` for the full command reference.",
+        await ctx.send(
+            embed=info_embed(
+                "Danger Module",
+                "**Subcommands**\n"
+                "`+danger roles` — manage protected roles\n"
+                "`+danger tag` — manage mass-mention allowlist\n\n"
+                "Use `+help` for the full command reference.",
+            )
         )
-        await ctx.send(embed=embed)
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  +danger roles — protected role management
+    #  +danger roles
     # ══════════════════════════════════════════════════════════════════════════
 
     @danger.group(name="roles", invoke_without_command=True)
     @commands.guild_only()
     async def danger_roles(self, ctx: commands.Context) -> None:
-        """List all roles currently marked as protected."""
         rows = await self.db.danger_role_list(ctx.guild.id)
         if not rows:
             return await ctx.send(
-                embed=info_embed("Danger Roles", "No roles are currently marked as protected.")
+                embed=info_embed(
+                    "Danger Roles",
+                    "No roles are currently marked as protected.",
+                )
             )
 
         lines = []
         for row in rows:
             role = ctx.guild.get_role(row["role_id"])
             label = role.mention if role else f"`{row['role_id']}`"
-            has_admin = " *(Admin)*" if role and role.permissions.administrator else ""
-            lines.append(f"• {label}{has_admin}")
+            admin_note = " (Administrator)" if role and role.permissions.administrator else ""
+            lines.append(f"- {label}{admin_note}")
 
         embed = discord.Embed(
-            title="⚠️  Protected (Danger) Roles",
+            title="Protected Roles",
             description="\n".join(lines),
             color=0xE67E22,
         )
-        embed.set_footer(text=f"Security Bot • {len(rows)} protected role(s)")
+        embed.set_footer(text=f"{FOOTER} — {len(rows)} protected role(s)")
         await ctx.send(embed=embed)
 
     @danger_roles.command(name="add")
     @commands.guild_only()
     async def danger_roles_add(self, ctx: commands.Context, role: discord.Role) -> None:
-        """Mark a role as protected — unauthorized assignment will be reversed."""
         await self.db.danger_role_add(ctx.guild.id, role.id)
-        log.info("Danger role added: guild=%d role=%d (%s) by %s", ctx.guild.id, role.id, role.name, ctx.author)
+        log.info(
+            "Danger role added: guild=%d role=%d (%s) by %s",
+            ctx.guild.id, role.id, role.name, ctx.author,
+        )
         await ctx.send(
             embed=success_embed(
                 "Danger Role Added",
-                f"{role.mention} is now **protected**.\n"
-                "Any unauthorized member granted this role will have it removed instantly.",
+                f"{role.mention} is now protected.\n"
+                "Any unauthorized member granted this role will have it removed immediately.",
             )
         )
 
     @danger_roles.command(name="remove", aliases=["rm"])
     @commands.guild_only()
     async def danger_roles_remove(self, ctx: commands.Context, role: discord.Role) -> None:
-        """Remove a role from the protected list."""
         removed = await self.db.danger_role_remove(ctx.guild.id, role.id)
         if not removed:
             return await ctx.send(
                 embed=warn_embed("Not Found", f"{role.mention} was not in the protected list."),
                 delete_after=8,
             )
-        log.info("Danger role removed: guild=%d role=%d (%s) by %s", ctx.guild.id, role.id, role.name, ctx.author)
+        log.info(
+            "Danger role removed: guild=%d role=%d (%s) by %s",
+            ctx.guild.id, role.id, role.name, ctx.author,
+        )
         await ctx.send(
             embed=success_embed("Danger Role Removed", f"{role.mention} is no longer protected.")
         )
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  on_member_update — unauthorized danger role guard
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── on_member_update — unauthorized danger / admin role guard ─────────────
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -124,94 +139,95 @@ class Danger(commands.Cog):
             has_admin = role.permissions.administrator
 
             if not is_danger and not has_admin:
-                continue  # Not a protected role — no action needed.
+                continue
 
-            # Identify who granted the role.
             executor = await get_audit_executor(
                 guild, discord.AuditLogAction.member_role_update, after.id, limit=5
             )
 
-            # Skip if executor is whitelisted or is the guild owner.
             if executor:
-                if executor.id == guild.owner_id or executor.id == self.bot.user.id:
+                if executor.id in (guild.owner_id, self.bot.user.id):
                     continue
                 exec_member = guild.get_member(executor.id)
                 if exec_member and await is_whitelisted(self.db, guild, exec_member):
                     continue
 
-            # Remove the unauthorized role immediately.
-            reason = "[Security Bot] Unauthorized danger/admin role assignment reversed"
             try:
-                await after.remove_roles(role, reason=reason)
+                await after.remove_roles(
+                    role,
+                    reason="[Trossard] Unauthorized danger/admin role assignment reversed",
+                )
                 log.warning(
                     "Danger role stripped: guild=%d member=%d role=%r executor=%s",
                     guild.id, after.id, role.name, executor,
                 )
             except discord.Forbidden:
-                log.error("Forbidden removing danger role %r from %d in guild %d", role.name, after.id, guild.id)
+                log.error(
+                    "Forbidden removing danger role %r from %d in guild %d",
+                    role.name, after.id, guild.id,
+                )
                 continue
             except Exception as exc:
                 log.error("Failed to strip danger role: %s", exc)
                 continue
 
-            # Post a warning in the first available channel.
-            embed = discord.Embed(
-                title="⚠️  Unauthorized Role Assignment Blocked",
-                color=0xE67E22,
-                timestamp=discord.utils.utcnow(),
+            embed = log_embed("Unauthorized Role Assignment Blocked")
+            embed.color = 0xE67E22
+            embed.timestamp = discord.utils.utcnow()
+            embed.add_field(
+                name="Target Member",
+                value=f"{after.mention} (`{after.id}`)",
+                inline=True,
             )
-            embed.add_field(name="Target Member", value=f"{after.mention} (`{after.id}`)", inline=True)
             embed.add_field(name="Role", value=role.mention, inline=True)
             flag = "Protected Role" + (" + Administrator" if has_admin else "")
             embed.add_field(name="Flag", value=f"`{flag}`", inline=True)
             embed.add_field(
                 name="Executor",
-                value=f"{executor} (`{executor.id}`)" if executor else "*Unknown*",
+                value=f"{executor} (`{executor.id}`)" if executor else "Unknown",
                 inline=False,
             )
-            embed.add_field(name="Action", value="Role **removed** immediately.", inline=False)
-            embed.set_footer(text="Security Bot • Danger Roles")
-
-            await self._log(guild, embed)
+            embed.add_field(name="Action", value="Role removed immediately.", inline=False)
+            await send_log(guild, embed)
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  +danger tag — mass-mention allowlist management
+    #  +danger tag
     # ══════════════════════════════════════════════════════════════════════════
 
     @danger.group(name="tag", invoke_without_command=True)
     @commands.guild_only()
     async def danger_tag(self, ctx: commands.Context) -> None:
-        """List all users allowed to use @everyone / @here."""
         rows = await self.db.danger_tag_list(ctx.guild.id)
         if not rows:
             return await ctx.send(
-                embed=info_embed("Danger Tag", "No users are currently allowed to use @everyone / @here.")
+                embed=info_embed(
+                    "Danger Tag",
+                    "No users are currently allowed to use @everyone / @here.",
+                )
             )
 
         lines = []
         for row in rows:
             member = ctx.guild.get_member(row["user_id"])
             label = member.mention if member else f"`{row['user_id']}`"
-            lines.append(f"• {label}")
+            lines.append(f"- {label}")
 
         embed = discord.Embed(
-            title="🏷️  Danger Tag — Allowed Users",
+            title="Mass Mention Allowlist",
             description="\n".join(lines),
             color=0xE67E22,
         )
-        embed.set_footer(text=f"Security Bot • {len(rows)} user(s) allowed")
+        embed.set_footer(text=f"{FOOTER} — {len(rows)} user(s) allowed")
         await ctx.send(embed=embed)
 
     @danger_tag.command(name="add")
     @commands.guild_only()
-    async def danger_tag_add(
-        self,
-        ctx: commands.Context,
-        user: discord.Member,
-    ) -> None:
-        """Allow a user to use @everyone / @here mentions."""
+    async def danger_tag_add(self, ctx: commands.Context, user: discord.Member) -> None:
         await self.db.danger_tag_add(ctx.guild.id, user.id)
-        log.info("Danger tag added: guild=%d user=%d by %s", ctx.guild.id, user.id, ctx.author)
+        log.info(
+            "Danger tag added: guild=%d user=%d by %s",
+            ctx.guild.id, user.id, ctx.author,
+        )
         await ctx.send(
             embed=success_embed(
                 "Danger Tag Added",
@@ -221,30 +237,28 @@ class Danger(commands.Cog):
 
     @danger_tag.command(name="remove", aliases=["rm"])
     @commands.guild_only()
-    async def danger_tag_remove(
-        self,
-        ctx: commands.Context,
-        user: discord.Member,
-    ) -> None:
-        """Remove a user from the mass-mention allowlist."""
+    async def danger_tag_remove(self, ctx: commands.Context, user: discord.Member) -> None:
         removed = await self.db.danger_tag_remove(ctx.guild.id, user.id)
         if not removed:
             return await ctx.send(
                 embed=warn_embed("Not Found", f"{user.mention} was not in the danger tag list."),
                 delete_after=8,
             )
-        log.info("Danger tag removed: guild=%d user=%d by %s", ctx.guild.id, user.id, ctx.author)
+        log.info(
+            "Danger tag removed: guild=%d user=%d by %s",
+            ctx.guild.id, user.id, ctx.author,
+        )
         await ctx.send(
-            embed=success_embed("Danger Tag Removed", f"{user.mention} can no longer use mass mentions.")
+            embed=success_embed(
+                "Danger Tag Removed",
+                f"{user.mention} can no longer use mass mentions.",
+            )
         )
 
-    # ══════════════════════════════════════════════════════════════════════════
-    #  on_message — 0-ms mass mention guard
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── on_message — 0ms mass mention guard ──────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        # Only fire in guilds on human messages that actually contain a mass mention.
         if message.author.bot or not message.guild:
             return
         if not message.mention_everyone:
@@ -253,15 +267,11 @@ class Danger(commands.Cog):
         guild = message.guild
         author = message.author
 
-        # Whitelisted users may always use mass mentions.
         if await is_whitelisted(self.db, guild, author):
             return
-
-        # Explicitly permitted users (danger_tags) may also use them.
         if await self.db.danger_tag_check(guild.id, author.id):
             return
 
-        # ── Unauthorized — delete the message immediately ──────────────────
         try:
             await message.delete()
         except (discord.Forbidden, discord.NotFound):
@@ -272,20 +282,18 @@ class Danger(commands.Cog):
             guild.id, author.id, message.channel.id,
         )
 
-        # Temporary warning in the same channel.
         try:
-            await message.channel.send(
-                embed=discord.Embed(
-                    title="🚫  Mass Mention Blocked",
-                    description=(
-                        f"{author.mention} is not authorized to use `@everyone` or `@here`.\n"
-                        "Your message has been removed."
-                    ),
-                    color=0xE74C3C,
-                    timestamp=discord.utils.utcnow(),
-                ).set_footer(text="Security Bot • Danger Tag"),
-                delete_after=8,
+            warning = discord.Embed(
+                title="Mass Mention Blocked",
+                description=(
+                    f"{author.mention} is not authorized to use `@everyone` or `@here`.\n"
+                    "Your message has been removed."
+                ),
+                color=0xE74C3C,
+                timestamp=discord.utils.utcnow(),
             )
+            warning.set_footer(text=FOOTER)
+            await message.channel.send(embed=warning, delete_after=5)
         except discord.Forbidden:
             pass
 
@@ -296,10 +304,10 @@ class Danger(commands.Cog):
     @danger.error
     @danger_roles.error
     @danger_tag.error
-    async def _danger_perm_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+    async def _perm_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         if isinstance(error, commands.MissingPermissions):
             await ctx.send(
-                embed=error_embed("Permission Denied", "Administrator permission required."),
+                embed=error_embed("Permission Denied", "Administrator permission is required."),
                 delete_after=8,
             )
 
@@ -320,19 +328,6 @@ class Danger(commands.Cog):
                 embed=error_embed("Member Not Found", "Could not find that member. Mention them or use their ID."),
                 delete_after=8,
             )
-
-    # ══════════════════════════════════════════════════════════════════════════
-    #  Log helper
-    # ══════════════════════════════════════════════════════════════════════════
-
-    async def _log(self, guild: discord.Guild, embed: discord.Embed) -> None:
-        for ch in guild.text_channels:
-            if ch.permissions_for(guild.me).send_messages:
-                try:
-                    await ch.send(embed=embed)
-                except Exception:
-                    pass
-                return
 
 
 async def setup(bot: commands.Bot) -> None:
