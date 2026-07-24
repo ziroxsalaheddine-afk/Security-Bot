@@ -41,6 +41,7 @@ def _pe(emoji_str: str) -> discord.PartialEmoji:
 # ── Unicode fallbacks (used when Discord rejects custom emojis, error 50035) ──
 CATEGORY_FALLBACKS: dict[str, str] = {
     "Security Modules": "🛡️",
+    "Security":         "🔒",
     "Aliases":          "🔗",
     "Music":            "🎵",
     "DJ Whitelist":     "🎧",
@@ -110,6 +111,22 @@ PUBLIC_CATEGORIES: dict[str, dict] = {
             ("+autoreact add @user :emoji:","Binds an emoji so the bot auto-reacts to every message that user sends."),
             ("+autoreact remove @user",    "Removes a user's auto-react binding."),
             ("+autoreact list",            "Shows global status and every user with an assigned auto-react emoji."),
+        ],
+    },
+    "Security": {
+        "emoji": "<:vrs_security:1528586273445511199>",
+        "tagline": "Whitelist, Danger Roles, Danger Tag and Auto-Restore",
+        "commands": [
+            ("+wl",                        "Show all whitelisted users and roles."),
+            ("+wl @user / @role",          "Add user or role to bypass list."),
+            ("+wl remove @user / @role",   "Remove user or role from bypass."),
+            ("+danger roles",              "List protected roles."),
+            ("+danger roles add @role",    "Protect a role/admin permission."),
+            ("+danger roles remove @role", "Remove role protection."),
+            ("+danger tag",                "List allowed tag users."),
+            ("+danger tag add @user",      "Allow user to tag @everyone / @here."),
+            ("+danger tag remove @user",   "Revoke tag permission."),
+            ("Auto-Restore",               "Automatic background role and channel recreation with member reassignment on deletion."),
         ],
     },
     "Aliases": {
