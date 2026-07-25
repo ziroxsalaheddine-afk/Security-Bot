@@ -86,6 +86,23 @@ router = "path"
 PORT = "8081"
 BASE_PATH = "/__mockup"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Anti-Nuke Bot (Discord.js)"
+
+[[workflows.workflow]]
+name = "Anti-Nuke Bot (Discord.js)"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/discordjs-antinuke run start"
+
 [agent]
 stack = "BEST_EFFORT_FALLBACK"
 expertMode = true
