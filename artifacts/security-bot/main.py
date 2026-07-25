@@ -62,6 +62,10 @@ class Trossard(commands.Bot):
         await self.db.init()
         log.info("Database initialised.")
 
+        # Explicitly remove the built-in help command before any cog is loaded
+        # so that cogs.help is the sole handler for +help.
+        self.remove_command("help")
+
         for cog in COGS:
             try:
                 await self.load_extension(cog)
