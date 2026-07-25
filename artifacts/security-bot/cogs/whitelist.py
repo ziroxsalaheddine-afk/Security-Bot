@@ -3,9 +3,11 @@ Whitelist Cog — Dual user+role whitelist with per-guild isolation.
 No emojis in any user-facing text.
 
 Commands:
-  +wl                      — list whitelisted users and roles
-  +wl @user / @role        — add a user or role to the bypass list
-  +wl remove @user / @role — remove from bypass list
+  +whitelist                      — list whitelisted users and roles
+  +whitelist @user / @role        — add a user or role to the bypass list
+  +whitelist remove @user / @role — remove from bypass list
+
+Alias: +wl (all subcommands work identically)
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ class Whitelist(commands.Cog):
 
     # ── +wl ──────────────────────────────────────────────────────────────────
 
-    @commands.group(name="wl", invoke_without_command=True)
+    @commands.group(name="whitelist", aliases=["wl"], invoke_without_command=True)
     @commands.guild_only()
     async def whitelist(
         self,

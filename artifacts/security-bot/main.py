@@ -34,6 +34,7 @@ COGS = [
     "cogs.whitelist",
     "cogs.antinuke",
     "cogs.danger",
+    "cogs.help",
 ]
 
 

@@ -34,13 +34,14 @@ from utils import get_audit_executor, is_whitelisted, log_embed, send_log
 
 log = logging.getLogger("trossard.antinuke")
 
-_REASSIGN_DELAY = 0.30  # seconds between role re-assignments
+_REASSIGN_SEMAPHORE = 10  # max concurrent role re-assignments
 
 
 class AntiNuke(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.db: Database = bot.db  # type: ignore[attr-defined]
+        self._db_lock = asyncio.Lock()  # serialise all DB writes to the shared connection
         self._sync_task.start()
 
     def cog_unload(self) -> None:
@@ -66,12 +67,12 @@ class AntiNuke(commands.Cog):
             except Exception as exc:
                 log.warning("Chunk failed for guild %s: %s", guild.id, exc)
 
-        await self.db.role_cache_clear_guild(guild.id)
-
-        for member in guild.members:
-            role_ids = [r.id for r in member.roles if not r.is_default()]
-            if role_ids:
-                await self.db.role_cache_sync_member(guild.id, member.id, role_ids)
+        async with self._db_lock:
+            await self.db.role_cache_clear_guild(guild.id)
+            for member in guild.members:
+                role_ids = [r.id for r in member.roles if not r.is_default()]
+                if role_ids:
+                    await self.db.role_cache_sync_member(guild.id, member.id, role_ids)
 
         log.debug(
             "Role cache synced: guild=%d members=%d",
@@ -80,10 +81,11 @@ class AntiNuke(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        await asyncio.gather(
-            *[self._sync_guild(g) for g in self.bot.guilds],
-            return_exceptions=True,
-        )
+        for guild in self.bot.guilds:
+            try:
+                await self._sync_guild(guild)
+            except Exception as exc:
+                log.warning("Initial sync failed for guild %s: %s", guild.id, exc)
         log.info("Initial role cache sync complete (%d guild(s)).", len(self.bot.guilds))
 
     @commands.Cog.listener()
@@ -95,7 +97,8 @@ class AntiNuke(commands.Cog):
         if before.roles == after.roles:
             return
         role_ids = [r.id for r in after.roles if not r.is_default()]
-        await self.db.role_cache_sync_member(after.guild.id, after.id, role_ids)
+        async with self._db_lock:
+            await self.db.role_cache_sync_member(after.guild.id, after.id, role_ids)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Role restore
@@ -150,26 +153,32 @@ class AntiNuke(commands.Cog):
                 guild.id, role.name, exc,
             )
 
-        # Re-assign to original members.
-        reassigned = 0
+        # Re-assign to original members — concurrent with bounded semaphore.
         member_ids = await self.db.role_cache_get_members(guild.id, role.id)
+        reassigned = 0
 
         if new_role and member_ids:
-            for uid in member_ids:
+            sem = asyncio.Semaphore(_REASSIGN_SEMAPHORE)
+
+            async def _assign(uid: int) -> bool:
                 m = guild.get_member(uid)
                 if m is None:
-                    continue
-                try:
-                    await m.add_roles(
-                        new_role,
-                        reason="[Trossard] Role restore — original member",
-                    )
-                    reassigned += 1
-                except discord.Forbidden:
-                    log.warning("Forbidden adding role to member %d", uid)
-                except Exception as exc:
-                    log.debug("Role re-assign failed for %d: %s", uid, exc)
-                await asyncio.sleep(_REASSIGN_DELAY)
+                    return False
+                async with sem:
+                    try:
+                        await m.add_roles(
+                            new_role,
+                            reason="[Trossard] Role restore — original member",
+                        )
+                        return True
+                    except discord.Forbidden:
+                        log.warning("Forbidden adding role to member %d", uid)
+                    except discord.HTTPException as exc:
+                        log.debug("Role re-assign failed for %d: %s", uid, exc)
+                    return False
+
+            results = await asyncio.gather(*[_assign(uid) for uid in member_ids])
+            reassigned = sum(results)
 
             await self.db.role_cache_update_role_id(guild.id, role.id, new_role.id)
 

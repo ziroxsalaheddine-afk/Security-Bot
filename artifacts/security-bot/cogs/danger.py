@@ -4,6 +4,7 @@ No emojis in any user-facing text.
 
 Danger Roles (+danger roles ...):
   - Marks specific roles as protected.
+  - Accepts multiple roles in a single add/remove command.
   - on_member_update: if a protected role (or any Administrator role) is granted
     by a non-whitelisted executor, it is immediately stripped from the recipient
     and a security alert is posted.
@@ -93,36 +94,79 @@ class Danger(commands.Cog):
 
     @danger_roles.command(name="add")
     @commands.guild_only()
-    async def danger_roles_add(self, ctx: commands.Context, role: discord.Role) -> None:
-        await self.db.danger_role_add(ctx.guild.id, role.id)
-        log.info(
-            "Danger role added: guild=%d role=%d (%s) by %s",
-            ctx.guild.id, role.id, role.name, ctx.author,
-        )
-        await ctx.send(
-            embed=success_embed(
-                "Danger Role Added",
-                f"{role.mention} is now protected.\n"
-                "Any unauthorized member granted this role will have it removed immediately.",
+    async def danger_roles_add(self, ctx: commands.Context, *roles: discord.Role) -> None:
+        if not roles:
+            return await ctx.send(
+                embed=error_embed(
+                    "No Roles Specified",
+                    "Mention one or more roles to protect.\n"
+                    "Usage: `+danger roles add @role [@role ...]`",
+                ),
+                delete_after=8,
             )
-        )
+
+        for role in roles:
+            await self.db.danger_role_add(ctx.guild.id, role.id)
+            log.info(
+                "Danger role added: guild=%d role=%d (%s) by %s",
+                ctx.guild.id, role.id, role.name, ctx.author,
+            )
+
+        if len(roles) == 1:
+            body = (
+                f"{roles[0].mention} is now protected.\n"
+                "Any unauthorized member granted this role will have it removed immediately."
+            )
+        else:
+            mentions = "\n".join(f"- {r.mention}" for r in roles)
+            body = (
+                f"**{len(roles)} roles** are now protected:\n{mentions}\n\n"
+                "Any unauthorized member granted these roles will have them removed immediately."
+            )
+
+        await ctx.send(embed=success_embed("Danger Role(s) Added", body))
 
     @danger_roles.command(name="remove", aliases=["rm"])
     @commands.guild_only()
-    async def danger_roles_remove(self, ctx: commands.Context, role: discord.Role) -> None:
-        removed = await self.db.danger_role_remove(ctx.guild.id, role.id)
-        if not removed:
+    async def danger_roles_remove(self, ctx: commands.Context, *roles: discord.Role) -> None:
+        if not roles:
             return await ctx.send(
-                embed=warn_embed("Not Found", f"{role.mention} was not in the protected list."),
+                embed=error_embed(
+                    "No Roles Specified",
+                    "Mention one or more roles to unprotect.\n"
+                    "Usage: `+danger roles remove @role [@role ...]`",
+                ),
                 delete_after=8,
             )
-        log.info(
-            "Danger role removed: guild=%d role=%d (%s) by %s",
-            ctx.guild.id, role.id, role.name, ctx.author,
-        )
-        await ctx.send(
-            embed=success_embed("Danger Role Removed", f"{role.mention} is no longer protected.")
-        )
+
+        removed = []
+        not_found = []
+        for role in roles:
+            ok = await self.db.danger_role_remove(ctx.guild.id, role.id)
+            if ok:
+                removed.append(role)
+                log.info(
+                    "Danger role removed: guild=%d role=%d (%s) by %s",
+                    ctx.guild.id, role.id, role.name, ctx.author,
+                )
+            else:
+                not_found.append(role)
+
+        parts: list[str] = []
+        if removed:
+            mentions = "\n".join(f"- {r.mention}" for r in removed)
+            parts.append(f"**Removed ({len(removed)}):**\n{mentions}")
+        if not_found:
+            mentions = "\n".join(f"- {r.mention}" for r in not_found)
+            parts.append(f"**Not in protected list ({len(not_found)}):**\n{mentions}")
+
+        if not removed:
+            await ctx.send(
+                embed=warn_embed("Not Found", "\n\n".join(parts)),
+                delete_after=8,
+            )
+        else:
+            await ctx.send(embed=success_embed("Danger Role(s) Removed", "\n\n".join(parts)))
 
     # ── on_member_update — unauthorized danger / admin role guard ─────────────
 
